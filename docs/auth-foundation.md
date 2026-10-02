@@ -9,16 +9,25 @@ DB DocGen utiliza Supabase para gestionar sesiones, perfiles, documentos y permi
 3. Ejecuta `supabase/migrations/202609250001_auth_foundation.sql`.
 4. Comprueba que existen `profiles`, `documents` y `document_permissions` y que RLS está activado.
 5. En **Authentication > Providers**, mantén habilitado Email y configura Google si se utilizará ese proveedor.
-6. En **Authentication > URL Configuration**, configura la URL pública de la aplicación y conserva `http://localhost:5173/**` como redirección adicional durante el desarrollo.
-7. Para la URL pública `https://docgen.example.com`, autoriza al menos:
+6. En **Authentication > URL Configuration**, usa como **Site URL** `https://mstrozza.github.io/CraftLabDB/`.
+7. Añade estas URLs exactas en **Redirect URLs** para la versión de GitHub Pages:
 
    ```text
-   https://docgen.example.com/
-   https://docgen.example.com/?auth=setup
-   https://docgen.example.com/?auth=recovery
+   https://mstrozza.github.io/CraftLabDB/
+   https://mstrozza.github.io/CraftLabDB/?auth=setup
+   https://mstrozza.github.io/CraftLabDB/?auth=recovery
    ```
 
-8. Revisa la política de contraseñas y configura SMTP propio antes de utilizar el proyecto en producción.
+8. Conserva estas redirecciones de desarrollo local:
+
+   ```text
+   http://localhost:5173/
+   http://localhost:5173/?auth=setup
+   http://localhost:5173/?auth=recovery
+   ```
+
+9. Si Google está habilitado, su **Authorized redirect URI** en Google Cloud sigue siendo el callback de Supabase indicado en **Authentication > Providers > Google** (`https://<project-ref>.supabase.co/auth/v1/callback`). No lo sustituyas por la URL de GitHub Pages; Supabase redirige después a la raíz de la app.
+10. Revisa la política de contraseñas y configura SMTP propio antes de utilizar el proyecto en producción.
 
 ## 2. Configurar el entorno local
 
@@ -42,7 +51,7 @@ Los usuarios nuevos se crean como `reader`. Un administrador debe promocionarlos
 
 ## 4. Flujos de acceso
 
-- **Google**: inicia la autenticación OAuth y regresa a la URL desde la que se abrió la aplicación.
+- **Google**: inicia la autenticación OAuth y regresa a la raíz de esta instalación de la aplicación.
 - **Correo y contraseña**: utiliza el correo como identificador para los accesos habituales.
 - **Primer acceso**: envía un enlace seguro al correo. Al regresar mediante `?auth=setup`, solicita crear y confirmar una contraseña.
 - **Contraseña olvidada**: envía un enlace de recuperación. Al regresar mediante `?auth=recovery`, solicita establecer una contraseña nueva.
@@ -51,6 +60,12 @@ Los usuarios nuevos se crean como `reader`. Un administrador debe promocionarlos
 Las contraseñas se crean y actualizan directamente mediante Supabase Auth. Nunca se guardan en `profiles`, `localStorage` ni en el código de la aplicación.
 
 El enlace presentado como «primer acceso» es también un enlace seguro de autenticación. Para limitar estrictamente su emisión a una única alta sería necesario incorporar un flujo de invitaciones o una validación controlada desde servidor.
+
+La raíz de retorno se calcula con `import.meta.env.BASE_URL`. En localhost es `/`; en el build de GitHub Pages es `/CraftLabDB/`, de modo que OAuth, primer acceso y recuperación regresan a la misma instalación de la app.
+
+## Publicación en GitHub Pages
+
+En el repositorio de GitHub, selecciona **Settings > Pages > Build and deployment > Source: GitHub Actions**. Después crea en **Settings > Secrets and variables > Actions > Variables** las variables públicas `VITE_SUPABASE_URL` y `VITE_SUPABASE_PUBLISHABLE_KEY`. El workflow instala pnpm 11.19.0 y Node.js 20.19.0, ejecuta `pnpm install --frozen-lockfile`, compila con `PAGES_BASE_PATH=/CraftLabDB/` y publica `dist/`.
 
 ## 5. Integración incluida
 

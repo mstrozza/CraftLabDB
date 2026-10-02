@@ -4,6 +4,7 @@ import { isSupabaseConfigured, supabase } from '../lib/supabase';
 const AuthContext = createContext(null);
 const DEMO_USER_KEY = 'db-docgen-demo-user';
 const PASSWORD_FLOWS = ['setup', 'recovery'];
+const authRootUrl = () => new URL(import.meta.env.BASE_URL, window.location.origin);
 
 const readPasswordFlow = () => {
   const flow = new URL(window.location.href).searchParams.get('auth');
@@ -11,7 +12,7 @@ const readPasswordFlow = () => {
 };
 
 const authRedirectUrl = (flow) => {
-  const url = new URL(window.location.origin);
+  const url = authRootUrl();
   url.searchParams.set('auth', flow);
   return url.toString();
 };
@@ -124,7 +125,7 @@ export function AuthProvider({ children }) {
   const signInWithProvider = useCallback(async (provider) => {
     if (!supabase) throw new Error('Configura Supabase para habilitar el acceso.');
     setError(null);
-    const options = { redirectTo: window.location.origin };
+    const options = { redirectTo: authRootUrl().toString() };
     const { error: signInError } = await supabase.auth.signInWithOAuth({ provider, options });
     if (signInError) {
       setError(signInError);

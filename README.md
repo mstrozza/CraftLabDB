@@ -51,6 +51,23 @@ pnpm dev
 
 La aplicación estará disponible normalmente en `http://localhost:5173`.
 
+## Publicación en GitHub Pages
+
+La URL prevista para el repositorio `mstrozza/CraftLabDB` es **https://mstrozza.github.io/CraftLabDB/**. El workflow `.github/workflows/deploy.yml` publica `dist/` al actualizar `main` o al ejecutarse manualmente desde Actions.
+
+1. En GitHub, selecciona **Settings > Pages > Build and deployment > Source: GitHub Actions**.
+2. En **Settings > Secrets and variables > Actions > Variables**, crea estas dos variables de repositorio con los valores públicos del proyecto Supabase:
+
+   ```text
+   VITE_SUPABASE_URL
+   VITE_SUPABASE_PUBLISHABLE_KEY
+   ```
+
+3. En Supabase, configura **Authentication > URL Configuration**: Site URL `https://mstrozza.github.io/CraftLabDB/` y añade las redirecciones exactas de raíz, primer acceso y recuperación indicadas en [`docs/auth-foundation.md`](docs/auth-foundation.md). Conserva también las redirecciones de localhost para desarrollo.
+4. Si utilizas Google, conserva en Google Cloud el callback de Supabase que muestra **Authentication > Providers > Google**. El retorno final a `/CraftLabDB/` se configura en Supabase.
+
+El build para Pages establece `PAGES_BASE_PATH=/CraftLabDB/`; el build local continúa usando `/`. El workflow falla de forma explícita si falta alguna variable pública. No se debe introducir una clave `service_role` en GitHub Variables.
+
 ## Comprobaciones y compilación
 
 ```bash
