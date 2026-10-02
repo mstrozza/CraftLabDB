@@ -7,6 +7,14 @@ function ProviderIcon({ provider }) {
   return <span className="provider-microsoft" aria-hidden="true"><i /><i /><i /><i /></span>;
 }
 
+function AuthBrandPanel() {
+  return <section className="auth-brand-panel" aria-label="DB DocGen">
+    <div className="auth-brand"><span className="auth-brand-mark"><i /></span><span>Deutsche Bank</span></div>
+    <div className="auth-brand-copy"><span className="auth-eyebrow">DOCUMENTACIÓN TÉCNICA</span><h1>DB DocGen</h1><p>Crea, estructura y exporta especificaciones de evolutivos COBOL desde un único espacio de trabajo.</p></div>
+    <div className="auth-security-note"><ShieldCheck size={18} /><span>Acceso protegido y preparado para identidad corporativa</span></div>
+  </section>;
+}
+
 function PasswordControl({ id, value, onChange, autoComplete, placeholder, disabled }) {
   const [visible, setVisible] = useState(false);
   return <div className="auth-email-control auth-password-control">
@@ -19,7 +27,7 @@ function PasswordControl({ id, value, onChange, autoComplete, placeholder, disab
 }
 
 function LoginScreen({ passwordFlow = null }) {
-  const { configured, error: authError, clearAuthError, signInDemo, signInWithEmail, signInWithPassword, signInWithProvider, sendPasswordRecovery, setPassword } = useAuth();
+  const { configured, error: authError, clearAuthError, signInDemo, requestAccess, signInWithPassword, signInWithProvider, sendPasswordRecovery, setPassword } = useAuth();
   const [mode, setMode] = useState(passwordFlow === 'setup' ? 'set-password' : passwordFlow === 'recovery' ? 'reset-password' : 'login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -65,10 +73,14 @@ function LoginScreen({ passwordFlow = null }) {
     setFormError('');
     setEmailSent(false);
     try {
-      if (mode === 'first-access') await signInWithEmail(email);
+      if (mode === 'first-access') await requestAccess(email);
       else await sendPasswordRecovery(email);
       setEmailSent(true);
-    } catch { setFormError('No se ha podido enviar el enlace. Inténtalo de nuevo más tarde.'); }
+    } catch {
+      setFormError(mode === 'first-access'
+        ? 'No se ha podido registrar la solicitud. Inténtalo de nuevo más tarde.'
+        : 'No se ha podido enviar el enlace. Inténtalo de nuevo más tarde.');
+    }
     finally { setSubmitting(''); }
   };
 
@@ -97,15 +109,11 @@ function LoginScreen({ passwordFlow = null }) {
 
   const isPasswordForm = mode === 'set-password' || mode === 'reset-password';
   const isEmailRequest = mode === 'first-access' || mode === 'forgot-password';
-  const title = isPasswordForm ? (mode === 'set-password' ? 'Crea tu contraseña' : 'Nueva contraseña') : isEmailRequest ? (mode === 'first-access' ? 'Primera vez' : 'Recuperar contraseña') : 'Iniciar sesión';
-  const intro = isPasswordForm ? (mode === 'set-password' ? 'Crea una contraseña para acceder con tu correo la próxima vez.' : 'Establece una contraseña nueva para tu cuenta.') : isEmailRequest ? (mode === 'first-access' ? 'Verifica tu correo para crear tu contraseña.' : 'Te enviaremos un enlace para cambiar tu contraseña.') : 'Identifícate para acceder a tus documentos técnicos.';
+  const title = isPasswordForm ? (mode === 'set-password' ? 'Crea tu contraseña' : 'Nueva contraseña') : isEmailRequest ? (mode === 'first-access' ? 'Solicitar acceso' : 'Recuperar contraseña') : 'Iniciar sesión';
+  const intro = isPasswordForm ? (mode === 'set-password' ? 'Crea una contraseña para acceder con tu correo la próxima vez.' : 'Establece una contraseña nueva para tu cuenta.') : isEmailRequest ? (mode === 'first-access' ? 'Indica tu correo para solicitar acceso. Un administrador revisará la petición.' : 'Te enviaremos un enlace para cambiar tu contraseña.') : 'Identifícate para acceder a tus documentos técnicos.';
 
   return <main className="auth-shell">
-    <section className="auth-brand-panel" aria-label="DB DocGen">
-      <div className="auth-brand"><span className="auth-brand-mark"><i /></span><span>Deutsche Bank</span></div>
-      <div className="auth-brand-copy"><span className="auth-eyebrow">DOCUMENTACIÓN TÉCNICA</span><h1>DB DocGen</h1><p>Crea, estructura y exporta especificaciones de evolutivos COBOL desde un único espacio de trabajo.</p></div>
-      <div className="auth-security-note"><ShieldCheck size={18} /><span>Acceso protegido y preparado para identidad corporativa</span></div>
-    </section>
+    <AuthBrandPanel />
 
     <section className="auth-form-panel"><div className="auth-card">
       {isEmailRequest && <button type="button" className="auth-back-button" onClick={() => changeMode('login')}><ArrowLeft size={15} /> Volver</button>}
@@ -127,15 +135,15 @@ function LoginScreen({ passwordFlow = null }) {
           <button type="button" className="auth-inline-link auth-forgot-link" onClick={() => changeMode('forgot-password')}>¿Olvidaste la contraseña?</button>
           <button type="submit" className="auth-submit-button" disabled={Boolean(submitting)}>{submitting === 'login' ? <LoaderCircle className="auth-spinner" size={17} /> : <LockKeyhole size={17} />}Iniciar sesión</button>
         </form>
-        <div className="auth-first-access"><span>¿Es tu primera vez?</span><button type="button" className="auth-inline-link" onClick={() => changeMode('first-access')}>Recibir enlace para crear contraseña</button></div>
+        <div className="auth-first-access"><span>¿Es tu primera vez?</span><button type="button" className="auth-inline-link" onClick={() => changeMode('first-access')}>Solicitar acceso</button></div>
         <p id="microsoft-pending-note" className="sr-only">El acceso con Microsoft estará disponible próximamente.</p>
       </div>}
 
       {configured && isEmailRequest && <form className="auth-email-form" onSubmit={submitEmailRequest}>
         <label htmlFor="auth-request-email">Correo electrónico</label>
         <div className="auth-email-control"><Mail size={16} aria-hidden="true" /><input id="auth-request-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setEmailSent(false); }} autoComplete="email" placeholder="nombre@empresa.com" disabled={Boolean(submitting)} required /></div>
-        <button type="submit" className="auth-submit-button" disabled={Boolean(submitting)}>{submitting === 'email' ? <LoaderCircle className="auth-spinner" size={17} /> : <Mail size={17} />}{mode === 'first-access' ? 'Enviar enlace de acceso' : 'Enviar enlace de recuperación'}</button>
-        {emailSent && <div className="auth-success" role="status">Si el correo puede recibir un enlace, lo encontrarás en tu bandeja de entrada.</div>}
+        <button type="submit" className="auth-submit-button" disabled={Boolean(submitting)}>{submitting === 'email' ? <LoaderCircle className="auth-spinner" size={17} /> : <Mail size={17} />}{mode === 'first-access' ? 'Solicitar acceso' : 'Enviar enlace de recuperación'}</button>
+        {emailSent && <div className="auth-success" role="status">{mode === 'first-access' ? 'Solicitud recibida. Si corresponde, recibirás instrucciones por correo tras la revisión.' : 'Si el correo puede recibir un enlace, lo encontrarás en tu bandeja de entrada.'}</div>}
       </form>}
 
       {configured && isPasswordForm && <form className="auth-email-form" onSubmit={submitNewPassword}>
@@ -161,8 +169,54 @@ function LoginScreen({ passwordFlow = null }) {
   </main>;
 }
 
+function PendingAccessScreen({ profileError = false }) {
+  const { user, requestAccess, refreshProfile, signOut } = useAuth();
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const run = async (action) => {
+    setBusy(action);
+    setMessage('');
+    setError('');
+    try {
+      if (action === 'request') {
+        await requestAccess(user.email);
+        setMessage('Solicitud recibida. Si corresponde, recibirás instrucciones por correo tras la revisión.');
+      } else if (action === 'refresh') {
+        await refreshProfile();
+        setMessage('Estado comprobado. Tu acceso sigue pendiente de aprobación.');
+      } else {
+        await signOut();
+      }
+    } catch {
+      setError('No se ha podido completar la acción. Inténtalo de nuevo.');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return <main className="auth-shell">
+    <AuthBrandPanel />
+    <section className="auth-form-panel"><div className="auth-card auth-pending-card">
+      <div className="auth-card-icon"><ShieldCheck size={22} /></div>
+      <span className="auth-card-kicker">ACCESO A LA APLICACIÓN</span>
+      <h2>{profileError ? 'No se pudo comprobar el acceso' : 'Acceso pendiente'}</h2>
+      <p className="auth-intro">{profileError ? 'Comprueba de nuevo el estado de tu cuenta.' : 'Tu cuenta todavía no tiene acceso activo. Un administrador debe aprobarla antes de abrir el editor.'}</p>
+      <p className="auth-pending-email">{user?.email}</p>
+      <div className="auth-pending-actions">
+        <button type="button" className="auth-submit-button" disabled={Boolean(busy) || !user?.email} onClick={() => run('request')}>Solicitar aprobación</button>
+        <button type="button" className="auth-secondary-button" disabled={Boolean(busy)} onClick={() => run('refresh')}>Comprobar acceso</button>
+        <button type="button" className="auth-inline-link" disabled={Boolean(busy)} onClick={() => run('signout')}>Cerrar sesión</button>
+      </div>
+      {message && <div className="auth-success" role="status">{message}</div>}
+      {error && <div className="auth-error" role="alert">{error}</div>}
+    </div><p className="auth-footer">DB DocGen · Evolutivos COBOL</p></section>
+  </main>;
+}
+
 export function AuthGate({ children }) {
-  const { configured, status, isAuthenticated, passwordFlow } = useAuth();
+  const { configured, status, isAuthenticated, passwordFlow, profileStatus, profile, user } = useAuth();
   useEffect(() => {
     try {
       const savedTheme = window.localStorage.getItem('db-docgen-theme') === 'dark' ? 'dark' : 'light';
@@ -173,5 +227,7 @@ export function AuthGate({ children }) {
   if (status === 'loading') return <div className="auth-loading"><LoaderCircle className="auth-spinner" size={28} /><span>Comprobando sesión…</span></div>;
   if (!isAuthenticated) return <LoginScreen key="login" />;
   if (configured && passwordFlow) return <LoginScreen key={passwordFlow} passwordFlow={passwordFlow} />;
+  if (configured && ((!profile && profileStatus === 'loading') || (profile && profile.id !== user?.id))) return <div className="auth-loading"><LoaderCircle className="auth-spinner" size={28} /><span>Comprobando permisos…</span></div>;
+  if (configured && (profileStatus === 'error' || !profile?.is_active)) return <PendingAccessScreen profileError={profileStatus === 'error'} />;
   return children;
 }

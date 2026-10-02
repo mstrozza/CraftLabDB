@@ -10,7 +10,8 @@ Aplicación web para crear, estructurar y exportar especificaciones técnicas de
 - Exportación ajustada al contenido, sin barras de desplazamiento internas.
 - Temas claro y oscuro.
 - Acceso con Google o mediante correo y contraseña.
-- Primer acceso y recuperación de contraseña mediante enlace por correo.
+- Solicitud de acceso revisada por un administrador antes de enviar la invitación.
+- Primer acceso aprobado y recuperación de contraseña mediante enlace por correo.
 - Perfiles, roles y permisos preparados en Supabase.
 
 ## Requisitos
@@ -37,9 +38,10 @@ No añadas claves secretas ni la clave `service_role` a variables que comiencen 
 ## Supabase
 
 1. Crea un proyecto en Supabase.
-2. Ejecuta la migración `supabase/migrations/202609250001_auth_foundation.sql` desde el editor SQL.
-3. Habilita el proveedor de correo y, si se desea, Google en `Authentication > Providers`.
-4. Configura `Authentication > URL Configuration` con la URL pública y las redirecciones de autenticación.
+2. Ejecuta, en orden, `supabase/migrations/202609250001_auth_foundation.sql` y `supabase/migrations/202610020001_managed_access.sql` desde el editor SQL.
+3. Activa un primer administrador existente y despliega las Edge Functions `request-access` y `review-access-request` siguiendo [`docs/auth-foundation.md`](docs/auth-foundation.md).
+4. Habilita Email y, si se desea, Google en `Authentication > Providers`; desactiva **Allow new users to sign up** después de activar el primer administrador.
+5. Configura `Authentication > URL Configuration` con la URL pública y las redirecciones de autenticación.
 
 La guía detallada está disponible en [`docs/auth-foundation.md`](docs/auth-foundation.md).
 
@@ -91,6 +93,9 @@ docs/                 Documentación técnica
 
 - `.env.local` está excluido de Git.
 - El navegador utiliza únicamente la clave pública de Supabase.
+- `request-access` registra solicitudes sin crear usuarios ni enviar correos. Sólo la revisión aprobada envía la invitación o el enlace de contraseña.
+- Las solicitudes públicas se limitan a 10 intentos por hora y huella de IP; la IP no se guarda en claro. En producción conviene añadir límites del gateway y CAPTCHA.
+- `review-access-request` valida en el servidor el JWT y el perfil de administrador activo antes de usar la clave de servicio.
 - Las contraseñas se gestionan exclusivamente mediante Supabase Auth.
 - Las tablas remotas utilizan políticas Row Level Security.
 

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 const AuthContext = createContext(null);
@@ -39,6 +39,8 @@ export function AuthProvider({ children }) {
   const [demoUser, setDemoUser] = useState(readDemoUser);
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [profileStatus, setProfileStatus] = useState(isSupabaseConfigured ? 'loading' : 'ready');
+  const profileLoadId = useRef(0);
   const [status, setStatus] = useState(() => {
     if (isSupabaseConfigured) return 'loading';
     return readDemoUser() ? 'authenticated' : 'anonymous';
@@ -48,20 +50,29 @@ export function AuthProvider({ children }) {
   const clearAuthError = useCallback(() => setError(null), []);
 
   const loadProfile = useCallback(async (userId) => {
+    const loadId = ++profileLoadId.current;
+    setProfileStatus('loading');
     if (!supabase || !userId) {
       setProfile(null);
+      setProfileStatus('ready');
       return null;
     }
-
-    const { data, error: profileError } = await supabase
-      .from('profiles')
-      .select('id, display_name, email, role, is_active, created_at, updated_at')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (profileError) throw profileError;
-    setProfile(data);
-    return data;
+    try {
+      const { data, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, display_name, email, role, is_active, created_at, updated_at')
+        .eq('id', userId)
+        .maybeSingle();
+      if (profileError) throw profileError;
+      if (loadId === profileLoadId.current) {
+        setProfile(data);
+        setProfileStatus('ready');
+      }
+      return data;
+    } catch (profileError) {
+      if (loadId === profileLoadId.current) setProfileStatus('error');
+      throw profileError;
+    }
   }, []);
 
   useEffect(() => {
@@ -75,6 +86,7 @@ export function AuthProvider({ children }) {
         if (!active) return;
         setSession(data.session);
         if (data.session?.user) await loadProfile(data.session.user.id);
+        else setProfileStatus('ready');
         if (active) setStatus(data.session ? 'authenticated' : 'anonymous');
       } catch (initialisationError) {
         if (!active) return;
@@ -90,13 +102,14 @@ export function AuthProvider({ children }) {
       setSession(nextSession);
       setError(null);
       setStatus(nextSession ? 'authenticated' : 'anonymous');
+      profileLoadId.current += 1;
+      setProfile(null);
+      setProfileStatus(nextSession ? 'loading' : 'ready');
       if (event === 'PASSWORD_RECOVERY') setPasswordFlow('recovery');
       window.setTimeout(() => {
         if (!active) return;
         if (nextSession?.user) {
           loadProfile(nextSession.user.id).catch((profileError) => setError(profileError));
-        } else {
-          setProfile(null);
         }
       }, 0);
     });
@@ -133,21 +146,32 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const signInWithEmail = useCallback(async (email) => {
-    if (!supabase) throw new Error('Configura Supabase para habilitar el acceso por correo.');
+  const requestAccess = useCallback(async (email) => {
+    if (!supabase) throw new Error('Configura Supabase para solicitar acceso.');
     setError(null);
-    const { error: signInError } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        emailRedirectTo: authRedirectUrl('setup'),
-        shouldCreateUser: true,
-      },
+    const { error: requestError } = await supabase.functions.invoke('request-access', {
+      body: { email: email.trim() },
     });
-    if (signInError) {
-      setError(signInError);
-      throw signInError;
-    }
+    if (requestError) throw requestError;
   }, []);
+
+  const listAccessRequests = useCallback(async () => {
+    if (!supabase || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
+    const { data, error: listError } = await supabase.from('access_requests')
+      .select('id, email, status, requested_at, updated_at, reviewed_at, processing_started_at, attempts, error')
+      .order('requested_at', { ascending: false });
+    if (listError) throw listError;
+    return data ?? [];
+  }, [profile]);
+
+  const reviewAccessRequest = useCallback(async (id, action) => {
+    if (!supabase || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
+    const { data, error: reviewError } = await supabase.functions.invoke('review-access-request', {
+      body: { id, action },
+    });
+    if (reviewError) throw reviewError;
+    return data;
+  }, [profile]);
 
   const signInWithPassword = useCallback(async (email, password) => {
     if (!supabase) throw new Error('Configura Supabase para habilitar el acceso por correo.');
@@ -205,6 +229,7 @@ export function AuthProvider({ children }) {
     session,
     user: session?.user ?? demoUser ?? null,
     profile: effectiveProfile,
+    profileStatus,
     error,
     clearAuthError,
     passwordFlow,
@@ -214,13 +239,15 @@ export function AuthProvider({ children }) {
     role: effectiveProfile?.role ?? null,
     refreshProfile: () => (demoUser ? Promise.resolve(effectiveProfile) : loadProfile(session?.user?.id)),
     signInDemo,
-    signInWithEmail,
+    requestAccess,
+    listAccessRequests,
+    reviewAccessRequest,
     signInWithPassword,
     signInWithProvider,
     sendPasswordRecovery,
     setPassword,
     signOut,
-  }), [clearAuthError, demoUser, effectiveProfile, error, loadProfile, passwordFlow, session, sendPasswordRecovery, setPassword, signInDemo, signInWithEmail, signInWithPassword, signInWithProvider, signOut, status]);
+  }), [clearAuthError, demoUser, effectiveProfile, error, listAccessRequests, loadProfile, passwordFlow, profileStatus, requestAccess, reviewAccessRequest, session, sendPasswordRecovery, setPassword, signInDemo, signInWithPassword, signInWithProvider, signOut, status]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

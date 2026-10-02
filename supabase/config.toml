@@ -1,0 +1,6 @@
+[functions.request-access]
+verify_jwt = false
+
+# La función valida el JWT de usuario con Auth y comprueba el perfil admin activo.
+[functions.review-access-request]
+verify_jwt = false

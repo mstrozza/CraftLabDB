@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowLeft,
@@ -21,6 +21,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  ShieldCheck,
   Moon,
   Sun,
   Trash2,
@@ -450,15 +451,129 @@ function SectionCard({ definition, expanded, onToggle, children }) {
   );
 }
 
-function Modal({ title, children, onClose, className = '' }) {
+function Modal({ title, children, onClose, className = '', returnFocusRef = null }) {
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    dialogRef.current?.querySelector('button')?.focus();
+    return () => {
+      const focusTarget = returnFocusRef?.current ?? previousFocus;
+      if (focusTarget?.isConnected) focusTarget.focus?.();
+    };
+  }, []);
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    const focusable = [...dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')];
+    if (!focusable.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className={`modal ${className}`} role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
+      <div ref={dialogRef} tabIndex={-1} className={`modal ${className}`} role="dialog" aria-modal="true" aria-label={title} onKeyDown={handleKeyDown}>
         <div className="modal-head"><h2>{title}</h2><button type="button" onClick={onClose} aria-label="Cerrar"><X size={20} /></button></div>
         {children}
       </div>
     </div>
   );
+}
+
+const accessRequestLabels = {
+  pending: 'Pendiente',
+  processing: 'En proceso',
+  invited: 'Invitación enviada',
+  rejected: 'Rechazada',
+  invite_failed: 'Falló la invitación',
+};
+
+function AccessRequestsModal({ onClose, returnFocusRef }) {
+  const { listAccessRequests, reviewAccessRequest } = useAuth();
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+  const [now, setNow] = useState(Date.now());
+
+  const loadRequests = useCallback(async () => {
+    setLoading(true);
+    try {
+      setRequests(await listAccessRequests());
+      setError('');
+    } catch {
+      setError('No se han podido cargar las solicitudes.');
+    } finally {
+      setLoading(false);
+    }
+  }, [listAccessRequests]);
+
+  useEffect(() => { loadRequests(); }, [loadRequests]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const review = async (id, action) => {
+    setBusyId(id);
+    setError('');
+    try {
+      await reviewAccessRequest(id, action);
+    } catch {
+      setError('No se ha podido completar la revisión. Comprueba el estado antes de reintentar.');
+    } finally {
+      setBusyId(null);
+      try { setRequests(await listAccessRequests()); }
+      catch { setError('No se ha podido actualizar la lista de solicitudes.'); }
+    }
+  };
+
+  return <Modal title="Solicitudes de acceso" className="access-requests-modal" onClose={onClose} returnFocusRef={returnFocusRef}>
+    <p>Revisa cada correo antes de autorizar la entrada. La aprobación envía una invitación o un enlace para establecer contraseña. Un reintento puede enviar un segundo correo y sólo se habilita 15 minutos después del intento anterior.</p>
+    <div className="access-requests-toolbar"><span>{requests.length} solicitudes</span><button type="button" onClick={loadRequests} disabled={loading || Boolean(busyId)}><RotateCcw size={14} />Actualizar</button></div>
+    {error && <div className="auth-error" role="alert">{error}</div>}
+    {loading ? <p className="access-requests-empty">Cargando solicitudes…</p> : requests.length === 0 ? <p className="access-requests-empty">No hay solicitudes de acceso.</p> : <div className="access-requests-list">
+      {requests.map((request) => {
+        const retryable = request.status === 'invite_failed' || request.status === 'processing';
+        const retryAt = new Date(request.processing_started_at || request.updated_at).getTime() + 15 * 60 * 1000;
+        const canRetry = retryable && now >= retryAt;
+        const waitMinutes = Math.max(1, Math.ceil((retryAt - now) / 60000));
+        return <div className="access-request" key={request.id}>
+        <div className="access-request-details"><strong>{request.email}</strong><span>Solicitada el {new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(request.requested_at))}</span></div>
+        <span className={`access-request-status status-${request.status}`}>{accessRequestLabels[request.status] ?? request.status}</span>
+        {request.status === 'invite_failed' && <small className="access-request-error">{request.error || 'No se pudo enviar la invitación.'}</small>}
+        <div className="access-request-actions">
+          {request.status === 'pending' && <>
+            <button type="button" disabled={Boolean(busyId)} onClick={() => review(request.id, 'approve')}>Aprobar</button>
+            <button type="button" className="access-reject-button" disabled={Boolean(busyId)} onClick={() => review(request.id, 'reject')}>Rechazar</button>
+          </>}
+          {retryable && (canRetry
+            ? <button type="button" disabled={Boolean(busyId)} onClick={() => review(request.id, 'retry')}>Reintentar envío</button>
+            : <span>Reintento disponible en {waitMinutes} min</span>)}
+          {busyId === request.id && <span role="status">Procesando…</span>}
+        </div>
+      </div>;
+      })}
+    </div>}
+  </Modal>;
 }
 
 export default function App() {
@@ -486,6 +601,7 @@ export default function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [newModal, setNewModal] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [accessRequestsOpen, setAccessRequestsOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileAddGroup, setProfileAddGroup] = useState(null);
   const [newProfileOption, setNewProfileOption] = useState('');
@@ -499,6 +615,7 @@ export default function App() {
   const [toast, setToast] = useState('');
   const [textareaHeights, setTextareaHeights] = useState({});
   const fileInput = useRef(null);
+  const userButtonRef = useRef(null);
   const navigationLock = useRef(false);
   const manualScrollIntent = useRef(false);
   const themeTransitionTimer = useRef(null);
@@ -939,12 +1056,13 @@ export default function App() {
             </div>}
           </div>
           <div className="user-menu">
-            <button className="user" type="button" aria-haspopup="menu" aria-expanded={userMenuOpen} onClick={() => setUserMenuOpen((open) => !open)}>
+            <button ref={userButtonRef} className="user" type="button" aria-haspopup="menu" aria-expanded={userMenuOpen} onClick={() => setUserMenuOpen((open) => !open)}>
               <span>{userInitials}</span><div><strong>{loggedUserName}</strong><small>{roleLabel}</small></div><ChevronDown size={14} />
             </button>
             {userMenuOpen && <div className="user-popover" role="menu">
               <div className="user-popover-profile"><span>{userInitials}</span><div><strong>{loggedUserName}</strong><small>{profile?.email || user?.email}</small></div></div>
               <div className="user-role-label">{roleLabel}</div>
+              {role === 'admin' && !isDemo && <button className="user-admin-action" type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); setAccessRequestsOpen(true); }}><ShieldCheck size={15} />Solicitudes de acceso</button>}
               <button type="button" role="menuitem" onClick={signOut}><LogOut size={15} />Cerrar sesión</button>
             </div>}
           </div>
@@ -992,6 +1110,7 @@ export default function App() {
       </main>
 
       {newModal && <Modal title="Crear nuevo evolutivo" onClose={() => setNewModal(false)}><p>Se creará un documento limpio con las ocho secciones normalizadas.</p><div className="modal-summary"><FileText size={22} /><div><strong>Plantilla técnica COBOL</strong><span>Versión inicial 1.0 · Estructura 01-08</span></div></div><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setNewModal(false)}>Cancelar</button><button className="primary-button" type="button" onClick={createNew}>Crear documento</button></div></Modal>}
+      {accessRequestsOpen && <AccessRequestsModal onClose={() => setAccessRequestsOpen(false)} returnFocusRef={userButtonRef} />}
       {profileModalOpen && <Modal title="Perfil técnico" className="profile-modal" onClose={() => setProfileModalOpen(false)}>
         <p>Selecciona las tecnologías y los procesos bancarios que intervienen en este evolutivo.</p>
         <div className="profile-groups">
