@@ -4,3 +4,11 @@ verify_jwt = false
 # La función valida el JWT de usuario con Auth y comprueba el perfil admin activo.
 [functions.review-access-request]
 verify_jwt = false
+
+# La función comprueba JWT y rol admin activo antes de llamar a la RPC privilegiada.
+[functions.manage-user-access]
+verify_jwt = false
+
+# Verifica el JWT en Auth y nunca usa un correo proporcionado por el navegador.
+[functions.request-reactivation]
+verify_jwt = false

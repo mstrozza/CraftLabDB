@@ -60,7 +60,7 @@ export function AuthProvider({ children }) {
     try {
       const { data, error: profileError } = await supabase
         .from('profiles')
-        .select('id, display_name, email, role, is_active, created_at, updated_at')
+        .select('id, display_name, email, role, is_active, has_ever_been_active, created_at, updated_at')
         .eq('id', userId)
         .maybeSingle();
       if (profileError) throw profileError;
@@ -120,6 +120,21 @@ export function AuthProvider({ children }) {
     };
   }, [loadProfile]);
 
+  useEffect(() => {
+    if (!supabase || !session?.user) return undefined;
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'visible') {
+        loadProfile(session.user.id).catch(() => { /* El estado error mantiene la edición bloqueada. */ });
+      }
+    };
+    window.addEventListener('focus', refreshOnReturn);
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    return () => {
+      window.removeEventListener('focus', refreshOnReturn);
+      document.removeEventListener('visibilitychange', refreshOnReturn);
+    };
+  }, [loadProfile, session?.user]);
+
   const signInDemo = useCallback(({ name, email }) => {
     if (isSupabaseConfigured) throw new Error('El acceso local no está disponible con Supabase configurado.');
     const nextUser = {
@@ -155,10 +170,25 @@ export function AuthProvider({ children }) {
     if (requestError) throw requestError;
   }, []);
 
+  const requestReactivation = useCallback(async () => {
+    if (!supabase || !session?.user || profileStatus !== 'ready' || !profile
+        || profile.id !== session.user.id || profile.is_active || !profile.has_ever_been_active) {
+      throw new Error('No se puede solicitar la reactivación.');
+    }
+    const { error: requestError } = await supabase.functions.invoke('request-reactivation', { body: {} });
+    if (requestError) {
+      if (requestError.context?.status === 409) {
+        const details = await requestError.context.json().catch(() => null);
+        if (details?.code === 'registration_processing') throw new Error('registration_processing');
+      }
+      throw requestError;
+    }
+  }, [profile, profileStatus, session?.user]);
+
   const listAccessRequests = useCallback(async () => {
     if (!supabase || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
     const { data, error: listError } = await supabase.from('access_requests')
-      .select('id, email, status, requested_at, updated_at, reviewed_at, processing_started_at, attempts, error')
+      .select('id, email, request_kind, status, requested_at, updated_at, reviewed_at, processing_started_at, attempts, error')
       .order('requested_at', { ascending: false });
     if (listError) throw listError;
     return data ?? [];
@@ -172,6 +202,23 @@ export function AuthProvider({ children }) {
     if (reviewError) throw reviewError;
     return data;
   }, [profile]);
+
+  const listUsers = useCallback(async () => {
+    if (!supabase || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
+    const { data, error: listError } = await supabase.from('profiles')
+      .select('id, display_name, email, role, is_active, created_at, updated_at')
+      .order('created_at', { ascending: false });
+    if (listError) throw listError;
+    return data ?? [];
+  }, [profile]);
+
+  const manageUserAccess = useCallback(async (targetId, action, value) => {
+    if (!supabase || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
+    const body = { targetId, action, ...(action === 'set_role' ? { role: value } : { active: value }) };
+    const { error: manageError } = await supabase.functions.invoke('manage-user-access', { body });
+    if (manageError) throw manageError;
+    return listUsers();
+  }, [listUsers, profile]);
 
   const signInWithPassword = useCallback(async (email, password) => {
     if (!supabase) throw new Error('Configura Supabase para habilitar el acceso por correo.');
@@ -240,14 +287,17 @@ export function AuthProvider({ children }) {
     refreshProfile: () => (demoUser ? Promise.resolve(effectiveProfile) : loadProfile(session?.user?.id)),
     signInDemo,
     requestAccess,
+    requestReactivation,
     listAccessRequests,
     reviewAccessRequest,
+    listUsers,
+    manageUserAccess,
     signInWithPassword,
     signInWithProvider,
     sendPasswordRecovery,
     setPassword,
     signOut,
-  }), [clearAuthError, demoUser, effectiveProfile, error, listAccessRequests, loadProfile, passwordFlow, profileStatus, requestAccess, reviewAccessRequest, session, sendPasswordRecovery, setPassword, signInDemo, signInWithPassword, signInWithProvider, signOut, status]);
+  }), [clearAuthError, demoUser, effectiveProfile, error, listAccessRequests, listUsers, loadProfile, manageUserAccess, passwordFlow, profileStatus, requestAccess, requestReactivation, reviewAccessRequest, session, sendPasswordRecovery, setPassword, signInDemo, signInWithPassword, signInWithProvider, signOut, status]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

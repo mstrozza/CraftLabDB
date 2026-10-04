@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowLeft,
@@ -26,9 +26,12 @@ import {
   Sun,
   Trash2,
   Upload,
+  Users,
   X,
 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
+
+const DocumentEditContext = createContext(true);
 
 const sectionDefinitions = [
   { id: '01', title: 'Cabecera', icon: FileText },
@@ -340,24 +343,28 @@ const buildWordDocument = (data) => {
 };
 
 function InlineInput({ value, onChange, ariaLabel, type = 'text', className = '' }) {
+  const canEdit = useContext(DocumentEditContext);
   return (
     <input
       className={`inline-input ${className}`}
       type={type}
       value={value ?? ''}
       aria-label={ariaLabel}
+      readOnly={!canEdit}
       onChange={(event) => onChange(event.target.value)}
     />
   );
 }
 
 function ResizableTextarea({ resizeId, height, onResize, className = '', value = '', ...props }) {
+  const canEdit = useContext(DocumentEditContext);
   return (
     <>
       <textarea
         {...props}
         className={`${className} print-textarea-source`}
         value={value}
+        readOnly={!canEdit}
         style={height ? { height: `${height}px` } : undefined}
         onPointerUp={(event) => onResize(resizeId, event.currentTarget.offsetHeight)}
       />
@@ -367,6 +374,7 @@ function ResizableTextarea({ resizeId, height, onResize, className = '', value =
 }
 
 function EditableTable({ columns, rows, onCellChange, onAdd, onRemove, onMove, addLabel, onColumnLabelChange, onColumnAdd, onColumnRemove, onColumnMove }) {
+  const canEdit = useContext(DocumentEditContext);
   return (
     <div className="table-block">
       <div className="table-scroll">
@@ -376,16 +384,16 @@ function EditableTable({ columns, rows, onCellChange, onAdd, onRemove, onMove, a
               <th key={column.key}>
                 {onColumnLabelChange ? (
                   <div className="editable-column-header">
-                    <input value={column.label} aria-label={`Nombre de columna ${columnIndex + 1}`} onChange={(event) => onColumnLabelChange(columnIndex, event.target.value)} />
-                    <div className="column-header-actions no-print">
+                    <input value={column.label} readOnly={!canEdit} aria-label={`Nombre de columna ${columnIndex + 1}`} onChange={(event) => onColumnLabelChange(columnIndex, event.target.value)} />
+                    {canEdit && <div className="column-header-actions no-print">
                       <button type="button" onClick={() => onColumnMove(columnIndex, -1)} disabled={columnIndex === 0} aria-label={`Mover columna ${column.label} a la izquierda`} title="Mover columna a la izquierda"><ArrowLeft size={12} /></button>
                       <button type="button" onClick={() => onColumnMove(columnIndex, 1)} disabled={columnIndex === columns.length - 1} aria-label={`Mover columna ${column.label} a la derecha`} title="Mover columna a la derecha"><ArrowRight size={12} /></button>
                       <button className="delete-button" type="button" onClick={() => onColumnRemove(columnIndex)} disabled={columns.length === 1} aria-label={`Eliminar columna ${column.label}`} title="Eliminar columna"><Trash2 size={12} /></button>
-                    </div>
+                    </div>}
                   </div>
                 ) : column.label}
               </th>
-            ))}<th className="row-actions-heading no-print"><span className="sr-only">Acciones</span></th></tr>
+            ))}{canEdit && <th className="row-actions-heading no-print"><span className="sr-only">Acciones</span></th>}</tr>
           </thead>
           <tbody>
             {rows.length ? rows.map((row, rowIndex) => (
@@ -397,6 +405,7 @@ function EditableTable({ columns, rows, onCellChange, onAdd, onRemove, onMove, a
                         className={`action-select action-${String(row[column.key]).toLowerCase()}`}
                         value={row[column.key]}
                         aria-label={`${column.label}, fila ${rowIndex + 1}`}
+                        disabled={!canEdit}
                         onChange={(event) => onCellChange(rowIndex, column.key, event.target.value)}
                       >
                         {(column.options ?? ['Nuevo', 'Modificado', 'Eliminado']).map((option) => <option key={option}>{option}</option>)}
@@ -411,24 +420,24 @@ function EditableTable({ columns, rows, onCellChange, onAdd, onRemove, onMove, a
                     )}
                   </td>
                 ))}
-                <td className="row-actions-cell no-print">
+                {canEdit && <td className="row-actions-cell no-print">
                   <div className="row-actions">
                     <button type="button" onClick={() => onMove(rowIndex, -1)} disabled={rowIndex === 0} aria-label={`Subir fila ${rowIndex + 1}`} title="Subir fila"><ArrowUp size={13} /></button>
                     <button type="button" onClick={() => onMove(rowIndex, 1)} disabled={rowIndex === rows.length - 1} aria-label={`Bajar fila ${rowIndex + 1}`} title="Bajar fila"><ArrowDown size={13} /></button>
                     <button className="delete-button" type="button" onClick={() => onRemove(rowIndex)} aria-label={`Eliminar fila ${rowIndex + 1}`} title="Eliminar fila"><Trash2 size={13} /></button>
                   </div>
-                </td>
+                </td>}
               </tr>
             )) : (
-              <tr className="empty-row"><td colSpan={columns.length + 1}>Sin impacto / No aplica. Añade una fila si esta sección requiere contenido.</td></tr>
+              <tr className="empty-row"><td colSpan={columns.length + (canEdit ? 1 : 0)}>Sin impacto / No aplica.</td></tr>
             )}
           </tbody>
         </table>
       </div>
-      <div className="table-footer-actions no-print">
+      {canEdit && <div className="table-footer-actions no-print">
         <button className="text-action" type="button" onClick={onAdd}><Plus size={15} />{addLabel}</button>
         {onColumnAdd && <button className="text-action" type="button" onClick={onColumnAdd}><Plus size={15} />Añadir columna</button>}
-      </div>
+      </div>}
     </div>
   );
 }
@@ -502,6 +511,7 @@ const accessRequestLabels = {
   pending: 'Pendiente',
   processing: 'En proceso',
   invited: 'Invitación enviada',
+  reactivated: 'Reactivada',
   rejected: 'Rechazada',
   invite_failed: 'Falló la invitación',
 };
@@ -547,17 +557,17 @@ function AccessRequestsModal({ onClose, returnFocusRef }) {
   };
 
   return <Modal title="Solicitudes de acceso" className="access-requests-modal" onClose={onClose} returnFocusRef={returnFocusRef}>
-    <p>Revisa cada correo antes de autorizar la entrada. La aprobación envía una invitación o un enlace para establecer contraseña. Un reintento puede enviar un segundo correo y sólo se habilita 15 minutos después del intento anterior.</p>
+    <p>Las altas iniciales envían una invitación o enlace de contraseña al aprobarse. Las reactivaciones sólo habilitan la cuenta existente: no envían correo. Los reintentos de alta pueden enviar un segundo mensaje tras 15 minutos.</p>
     <div className="access-requests-toolbar"><span>{requests.length} solicitudes</span><button type="button" onClick={loadRequests} disabled={loading || Boolean(busyId)}><RotateCcw size={14} />Actualizar</button></div>
     {error && <div className="auth-error" role="alert">{error}</div>}
     {loading ? <p className="access-requests-empty">Cargando solicitudes…</p> : requests.length === 0 ? <p className="access-requests-empty">No hay solicitudes de acceso.</p> : <div className="access-requests-list">
       {requests.map((request) => {
-        const retryable = request.status === 'invite_failed' || request.status === 'processing';
+        const retryable = request.request_kind === 'registration' && (request.status === 'invite_failed' || request.status === 'processing');
         const retryAt = new Date(request.processing_started_at || request.updated_at).getTime() + 15 * 60 * 1000;
         const canRetry = retryable && now >= retryAt;
         const waitMinutes = Math.max(1, Math.ceil((retryAt - now) / 60000));
         return <div className="access-request" key={request.id}>
-        <div className="access-request-details"><strong>{request.email}</strong><span>Solicitada el {new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(request.requested_at))}</span></div>
+        <div className="access-request-details"><strong>{request.email}</strong><span className="access-request-kind">{request.request_kind === 'reactivation' ? 'Reactivación' : 'Alta inicial'}</span><span>Solicitada el {new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(request.requested_at))}</span></div>
         <span className={`access-request-status status-${request.status}`}>{accessRequestLabels[request.status] ?? request.status}</span>
         {request.status === 'invite_failed' && <small className="access-request-error">{request.error || 'No se pudo enviar la invitación.'}</small>}
         <div className="access-request-actions">
@@ -576,8 +586,69 @@ function AccessRequestsModal({ onClose, returnFocusRef }) {
   </Modal>;
 }
 
+const userRoleLabels = { admin: 'Administrador', editor: 'Editor', reader: 'Sólo lectura', reviewer: 'Sólo lectura (rol anterior)' };
+
+function UsersAndRolesModal({ onClose, returnFocusRef }) {
+  const { user, listUsers, manageUserAccess } = useAuth();
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      setUsers(await listUsers());
+      setError('');
+    } catch {
+      setError('No se ha podido cargar la lista de usuarios.');
+    } finally {
+      setLoading(false);
+    }
+  }, [listUsers]);
+  useEffect(() => { loadUsers(); }, [loadUsers]);
+
+  const changeAccess = async (targetId, action, value) => {
+    setBusyId(targetId);
+    setError('');
+    try {
+      setUsers(await manageUserAccess(targetId, action, value));
+    } catch {
+      setError('No se ha podido cambiar el acceso. Actualiza la lista y comprueba que permanece un administrador activo.');
+      try { setUsers(await listUsers()); } catch { /* Conservar la lista visible. */ }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return <Modal title="Usuarios y roles" className="users-roles-modal" onClose={onClose} returnFocusRef={returnFocusRef}>
+    <p>Gestiona los perfiles existentes. Las solicitudes de primer acceso se revisan por separado.</p>
+    <div className="access-requests-toolbar"><span>{users.length} usuarios</span><button type="button" onClick={loadUsers} disabled={loading || Boolean(busyId)}><RotateCcw size={14} />Actualizar</button></div>
+    {error && <div className="auth-error" role="alert">{error}</div>}
+    {loading ? <p role="status">Cargando usuarios…</p> : users.length === 0 ? <p>No hay usuarios.</p> : <div className="users-roles-list">
+      {users.map((item) => {
+        const self = item.id === user?.id;
+        const locked = Boolean(busyId) || self;
+        return <div className="users-roles-item" key={item.id}>
+          <div className="users-roles-identity"><strong>{item.display_name || item.email || 'Usuario'}</strong><span>{item.email || 'Sin correo'}</span>{self && <small>Tu cuenta · no puedes quitarte el acceso de administrador.</small>}</div>
+          <label>Rol
+            <select value={item.role} disabled={locked} aria-label={`Rol de ${item.display_name || item.email}`} onChange={(event) => changeAccess(item.id, 'set_role', event.target.value)}>
+              {item.role === 'reviewer' && <option value="reviewer" disabled>{userRoleLabels.reviewer}</option>}
+              <option value="admin">Administrador</option><option value="editor">Editor</option><option value="reader">Sólo lectura</option>
+            </select>
+          </label>
+          <label className="users-roles-active"><input type="checkbox" checked={item.is_active} disabled={locked} onChange={(event) => changeAccess(item.id, 'set_active', event.target.checked)} />Activo</label>
+          {busyId === item.id && <span role="status">Guardando…</span>}
+        </div>;
+      })}
+    </div>}
+  </Modal>;
+}
+
 export default function App() {
-  const { user, profile, role, isDemo, signOut } = useAuth();
+  const { user, profile, profileStatus, role, isDemo, signOut } = useAuth();
+  const canEditDocument = profileStatus === 'ready' && profile?.is_active === true && ['admin', 'editor'].includes(role);
+  const canEditDocumentRef = useRef(canEditDocument);
+  useLayoutEffect(() => { canEditDocumentRef.current = canEditDocument; }, [canEditDocument]);
   const loggedUserName = profile?.display_name
     || user?.user_metadata?.full_name
     || user?.user_metadata?.name
@@ -591,7 +662,7 @@ export default function App() {
     .join('') || 'U';
   const roleLabel = isDemo
     ? 'Modo de prueba'
-    : ({ admin: 'Administrador', editor: 'Editor técnico', reader: 'Sólo lectura' }[role] ?? 'Usuario autenticado');
+    : ({ admin: 'Administrador', editor: 'Editor técnico', reader: 'Sólo lectura', reviewer: 'Sólo lectura' }[role] ?? 'Usuario autenticado');
   const [data, setData] = useState(() => createInitialDocument(loggedUserName));
   const [expanded, setExpanded] = useState(() => Object.fromEntries(sectionDefinitions.map(({ id }) => [id, true])));
   const [activeSection, setActiveSection] = useState('01');
@@ -602,6 +673,7 @@ export default function App() {
   const [newModal, setNewModal] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [accessRequestsOpen, setAccessRequestsOpen] = useState(false);
+  const [usersRolesOpen, setUsersRolesOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileAddGroup, setProfileAddGroup] = useState(null);
   const [newProfileOption, setNewProfileOption] = useState('');
@@ -615,6 +687,7 @@ export default function App() {
   const [toast, setToast] = useState('');
   const [textareaHeights, setTextareaHeights] = useState({});
   const fileInput = useRef(null);
+  const pendingImportRef = useRef(null);
   const userButtonRef = useRef(null);
   const navigationLock = useRef(false);
   const manualScrollIntent = useRef(false);
@@ -630,7 +703,9 @@ export default function App() {
     ? `${profileTags.slice(0, 3).join(' · ')}${profileTags.length > 3 ? ` +${profileTags.length - 3}` : ''}`
     : 'Seleccionar';
   const renderProfilePickerTrigger = () => (
-    <button className="profile-picker-trigger" type="button" aria-haspopup="dialog" aria-label={`Editar perfil técnico. Actual: ${profileTags.join(', ') || 'sin especificar'}`} title={profileTags.join(' · ') || 'Sin especificar'} onClick={() => setProfileModalOpen(true)}><span>{profileSummary}</span><i aria-hidden="true"><Pencil size={11} /></i></button>
+    canEditDocument
+      ? <button className="profile-picker-trigger" type="button" aria-haspopup="dialog" aria-label={`Editar perfil técnico. Actual: ${profileTags.join(', ') || 'sin especificar'}`} title={profileTags.join(' · ') || 'Sin especificar'} onClick={() => setProfileModalOpen(true)}><span>{profileSummary}</span><i aria-hidden="true"><Pencil size={11} /></i></button>
+      : <span className="profile-readonly" title={profileTags.join(' · ') || 'Sin especificar'}>{profileSummary}</span>
   );
 
   useEffect(() => {
@@ -731,6 +806,7 @@ export default function App() {
   }, [navigationTarget, expanded]);
 
   const mutate = (updater) => {
+    if (!canEditDocument) return;
     setData((current) => {
       const next = structuredClone(current);
       next.tableColumns ??= createDefaultTableColumns();
@@ -868,7 +944,21 @@ export default function App() {
     window.setTimeout(() => setToast(''), 2800);
   };
 
+  useLayoutEffect(() => {
+    const importedDocument = pendingImportRef.current;
+    if (!importedDocument) return;
+    if (data === importedDocument) {
+      pendingImportRef.current = null;
+      setTextareaHeights({});
+      setDirty(false);
+      notify('Documento importado correctamente');
+    } else if (!canEditDocument) {
+      pendingImportRef.current = null;
+    }
+  }, [data, canEditDocument]);
+
   const createNew = () => {
+    if (!canEditDocument) return;
     if (dirty && !window.confirm('Hay cambios no exportados. ¿Quieres continuar y perderlos?')) return;
     setData(emptyDocument(loggedUserName));
     setTextareaHeights({});
@@ -911,6 +1001,7 @@ export default function App() {
   const handleImport = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
+    if (!canEditDocument) return;
     if (!file) return;
     if (dirty && !window.confirm('Hay cambios no exportados. ¿Quieres reemplazar el documento actual?')) return;
     if (!file.name.toLowerCase().endsWith('.json')) {
@@ -918,12 +1009,13 @@ export default function App() {
       return;
     }
     try {
-      const parsed = JSON.parse(await file.text());
+      const fileContent = await file.text();
+      if (!canEditDocumentRef.current) return;
+      const parsed = JSON.parse(fileContent);
       if (parsed.schemaVersion !== '1.0' || !parsed.document) throw new Error('Formato no reconocido');
-      setData(normalizeDocument(parsed));
-      setTextareaHeights({});
-      setDirty(false);
-      notify('Documento importado correctamente');
+      const importedDocument = normalizeDocument(parsed);
+      pendingImportRef.current = importedDocument;
+      setData((current) => canEditDocumentRef.current ? importedDocument : current);
     } catch {
       notify('No se ha podido importar el archivo');
     }
@@ -1001,7 +1093,7 @@ export default function App() {
               {group.sources.length ? group.sources.map((source, sourceIndex) => (
                 <div className="data-source-block" key={source.id}>
                   <div className="data-source-heading-row">
-                    <div className="data-source-heading"><Database size={14} /><select className="source-type-select" value={source.type} aria-label={`Tipo de datos ${sourceIndex + 1} del apartado 6.${groupIndex + 1}`} onChange={(event) => setDataSourceType(groupIndex, sourceIndex, event.target.value)}><option>Tabla</option><option>Fichero</option><option>Datos</option></select><InlineInput value={source.title} ariaLabel={`Nombre de ${source.type.toLowerCase()} ${sourceIndex + 1} del apartado 6.${groupIndex + 1}`} onChange={(value) => setDataSourceTitle(groupIndex, sourceIndex, value)} /></div>
+                    <div className="data-source-heading"><Database size={14} /><select className="source-type-select" value={source.type} disabled={!canEditDocument} aria-label={`Tipo de datos ${sourceIndex + 1} del apartado 6.${groupIndex + 1}`} onChange={(event) => setDataSourceType(groupIndex, sourceIndex, event.target.value)}><option>Tabla</option><option>Fichero</option><option>Datos</option></select><InlineInput value={source.title} ariaLabel={`Nombre de ${source.type.toLowerCase()} ${sourceIndex + 1} del apartado 6.${groupIndex + 1}`} onChange={(value) => setDataSourceTitle(groupIndex, sourceIndex, value)} /></div>
                     <div className="subsection-actions no-print">
                       <button type="button" onClick={() => moveDataSource(groupIndex, sourceIndex, -1)} disabled={sourceIndex === 0} aria-label={`Subir tabla o fichero ${sourceIndex + 1} del apartado 6.${groupIndex + 1}`} title="Subir tabla o fichero"><ArrowUp size={14} /></button>
                       <button type="button" onClick={() => moveDataSource(groupIndex, sourceIndex, 1)} disabled={sourceIndex === group.sources.length - 1} aria-label={`Bajar tabla o fichero ${sourceIndex + 1} del apartado 6.${groupIndex + 1}`} title="Bajar tabla o fichero"><ArrowDown size={14} /></button>
@@ -1037,16 +1129,17 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell">
+    <DocumentEditContext.Provider value={canEditDocument}>
+    <div className={`app-shell ${canEditDocument ? '' : 'read-only'}`}>
       <header className="topbar no-print">
         <div className="brand-zone">
           <div className="brand">Deutsche Bank <span className="brand-mark"><i /></span></div>
-          <button className="new-button" type="button" onClick={() => setNewModal(true)}><Plus size={16} />Nuevo</button>
+          <button className="new-button" type="button" disabled={!canEditDocument} onClick={() => setNewModal(true)}><Plus size={16} />Nuevo</button>
         </div>
         <div className="breadcrumb"><span>Evolutivos</span><ChevronRight size={15} /><strong>{data.document.ticketId}</strong>{dirty && <i title="Cambios sin exportar" />}</div>
         <div className="top-actions">
-          <input ref={fileInput} className="file-input" type="file" accept=".json,.doc,.docx,.pdf" onChange={handleImport} />
-          <button className="ghost-button" type="button" onClick={() => fileInput.current?.click()}><Upload size={16} />Importar</button>
+          <input ref={fileInput} className="file-input" type="file" disabled={!canEditDocument} accept=".json,.doc,.docx,.pdf" onChange={handleImport} />
+          <button className="ghost-button" type="button" disabled={!canEditDocument} onClick={() => fileInput.current?.click()}><Upload size={16} />Importar</button>
           <div className="export-menu">
             <button className="export-button" type="button" onClick={() => setExportOpen((open) => !open)}><Download size={16} />Exportar<ChevronDown size={15} /></button>
             {exportOpen && <div className="export-popover">
@@ -1063,6 +1156,7 @@ export default function App() {
               <div className="user-popover-profile"><span>{userInitials}</span><div><strong>{loggedUserName}</strong><small>{profile?.email || user?.email}</small></div></div>
               <div className="user-role-label">{roleLabel}</div>
               {role === 'admin' && !isDemo && <button className="user-admin-action" type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); setAccessRequestsOpen(true); }}><ShieldCheck size={15} />Solicitudes de acceso</button>}
+              {role === 'admin' && !isDemo && <button className="user-admin-action" type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); setUsersRolesOpen(true); }}><Users size={15} />Usuarios y roles</button>}
               <button type="button" role="menuitem" onClick={signOut}><LogOut size={15} />Cerrar sesión</button>
             </div>}
           </div>
@@ -1084,7 +1178,7 @@ export default function App() {
           <h3>Información del documento</h3>
           <dl>
             <div className="profile-info-row"><dt>Perfil técnico</dt><dd>{renderProfilePickerTrigger()}</dd></div>
-            <div><dt>Estado</dt><dd><span className="status-badge">En edición</span></dd></div>
+            <div><dt>Estado</dt><dd><span className="status-badge">{canEditDocument ? 'En edición' : 'Sólo lectura'}</span></dd></div>
             <div><dt>Última actualización</dt><dd>{updatedLabel}</dd></div>
             <div><dt>Autor</dt><dd>{data.document.author || 'Sin asignar'}</dd></div>
           </dl>
@@ -1109,9 +1203,10 @@ export default function App() {
         ))}
       </main>
 
-      {newModal && <Modal title="Crear nuevo evolutivo" onClose={() => setNewModal(false)}><p>Se creará un documento limpio con las ocho secciones normalizadas.</p><div className="modal-summary"><FileText size={22} /><div><strong>Plantilla técnica COBOL</strong><span>Versión inicial 1.0 · Estructura 01-08</span></div></div><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setNewModal(false)}>Cancelar</button><button className="primary-button" type="button" onClick={createNew}>Crear documento</button></div></Modal>}
-      {accessRequestsOpen && <AccessRequestsModal onClose={() => setAccessRequestsOpen(false)} returnFocusRef={userButtonRef} />}
-      {profileModalOpen && <Modal title="Perfil técnico" className="profile-modal" onClose={() => setProfileModalOpen(false)}>
+      {newModal && canEditDocument && <Modal title="Crear nuevo evolutivo" onClose={() => setNewModal(false)}><p>Se creará un documento limpio con las ocho secciones normalizadas.</p><div className="modal-summary"><FileText size={22} /><div><strong>Plantilla técnica COBOL</strong><span>Versión inicial 1.0 · Estructura 01-08</span></div></div><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setNewModal(false)}>Cancelar</button><button className="primary-button" type="button" onClick={createNew}>Crear documento</button></div></Modal>}
+      {accessRequestsOpen && role === 'admin' && <AccessRequestsModal onClose={() => setAccessRequestsOpen(false)} returnFocusRef={userButtonRef} />}
+      {usersRolesOpen && role === 'admin' && <UsersAndRolesModal onClose={() => setUsersRolesOpen(false)} returnFocusRef={userButtonRef} />}
+      {profileModalOpen && canEditDocument && <Modal title="Perfil técnico" className="profile-modal" onClose={() => setProfileModalOpen(false)}>
         <p>Selecciona las tecnologías y los procesos bancarios que intervienen en este evolutivo.</p>
         <div className="profile-groups">
           {profileGroups.map((group) => <fieldset className="profile-group" key={group.id}>
@@ -1132,5 +1227,6 @@ export default function App() {
       </Modal>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
+    </DocumentEditContext.Provider>
   );
 }

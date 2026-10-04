@@ -121,6 +121,7 @@ button { cursor: pointer; }
 .auth-password-hint { margin: -1px 0 2px; color: #78879a; font-size: 9px; }
 .auth-email-help { margin: -1px 0 0; color: #78879a; font-size: 9px; line-height: 1.5; text-align: center; }
 .auth-success { margin-top: 2px; padding: 10px 12px; border: 1px solid #b8dfca; border-radius: 5px; color: #17623a; background: #effaf4; font-size: 10px; line-height: 1.5; }
+.auth-warning { margin-top: 2px; padding: 10px 12px; border: 1px solid #e5c76b; border-radius: 5px; color: #6f5200; background: #fff8db; font-size: 10px; line-height: 1.5; }
 .auth-pending-card .auth-intro { margin-bottom: 14px; }
 .auth-pending-email { margin: 0 0 18px; overflow-wrap: anywhere; color: #314966; font-size: 11px; font-weight: 700; }
 .auth-pending-actions { display: grid; gap: 9px; }
@@ -302,6 +303,7 @@ td .inline-input { min-height: 30px; }
 .access-request-details { min-width: 0; display: grid; gap: 5px; }
 .access-request-details strong { overflow-wrap: anywhere; font-size: 12px; }
 .access-request-details span, .access-request-error { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.access-request-details .access-request-kind { width: fit-content; padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; color: #315c83; font-weight: 700; }
 .access-request-status { padding: 5px 8px; border-radius: 12px; color: #325a7e; background: #e5f0fa; font-size: 9px; font-weight: 700; white-space: nowrap; }
 .access-request-status.status-invited { color: #17623a; background: #e3f5ea; }
 .access-request-status.status-rejected, .access-request-status.status-invite_failed { color: #9d3137; background: #ffebec; }
@@ -311,6 +313,22 @@ td .inline-input { min-height: 30px; }
 .access-request-actions button.access-reject-button { border-color: #d2a3a7; background: transparent; color: #9d3137; }
 .access-request-actions button:disabled { opacity: .6; cursor: wait; }
 .access-request-actions span { color: var(--muted); font-size: 10px; }
+.modal.users-roles-modal { width: min(800px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; }
+.users-roles-list { display: grid; gap: 9px; }
+.users-roles-item { display: grid; grid-template-columns: minmax(0, 1fr) 150px 80px; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafd; }
+.users-roles-identity { display: grid; gap: 4px; min-width: 0; }
+.users-roles-identity strong { font-size: 12px; overflow-wrap: anywhere; }
+.users-roles-identity span, .users-roles-identity small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.users-roles-item label { display: grid; gap: 5px; font-size: 10px; font-weight: 700; }
+.users-roles-item select { width: 100%; padding: 7px; border: 1px solid var(--line); border-radius: 5px; color: #172c4d; background: white; }
+.users-roles-item .users-roles-active { display: flex; align-items: center; gap: 7px; }
+.users-roles-item [role="status"] { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+.profile-readonly { display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-shell.read-only .section-content button { display: none; }
+.app-shell.read-only .section-content input[readonly],
+.app-shell.read-only .section-content textarea[readonly] { cursor: text; }
+.app-shell.read-only .section-content select:disabled { opacity: 1; color: inherit; cursor: default; }
+.app-shell.read-only .new-button:disabled, .app-shell.read-only .ghost-button:disabled { opacity: .55; cursor: not-allowed; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
 .modal-head h2 { margin: 0; font-size: 18px; }
 .modal-head button { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent; }
@@ -395,6 +413,7 @@ td .inline-input { min-height: 30px; }
   html[data-theme="dark"] .auth-password-hint { color: #9eabb8; }
   html[data-theme="dark"] .auth-email-help { color: #8f9eac; }
   html[data-theme="dark"] .auth-success { color: #a4dfbd; background: #173226; border-color: #37684c; }
+  html[data-theme="dark"] .auth-warning { color: #f1d277; background: #332b16; border-color: #665826; }
   html[data-theme="dark"] .auth-pending-email { color: #d5e5f2; }
   html[data-theme="dark"] .auth-secondary-button { color: #b8d6ed; background: #1b2530; border-color: #465563; }
   html[data-theme="dark"] .auth-secondary-button:hover { background: #243342; }
@@ -507,6 +526,9 @@ td .inline-input { min-height: 30px; }
   html[data-theme="dark"] .modal-backdrop { background: rgb(0 0 0 / 70%); }
   html[data-theme="dark"] .modal { color: #edf1f4; background: #151d26; box-shadow: 0 24px 70px rgb(0 0 0 / 55%); }
   html[data-theme="dark"] .access-request { background: #1b2530; border-color: #3a4754; }
+  html[data-theme="dark"] .access-request-details .access-request-kind { color: #c3d9eb; border-color: #465563; }
+  html[data-theme="dark"] .users-roles-item { background: #1b2530; border-color: #3a4754; }
+  html[data-theme="dark"] .users-roles-item select { color: #edf1f4; background: #101720; border-color: #465563; }
   html[data-theme="dark"] .access-requests-toolbar button { color: #9cc9ec; }
   html[data-theme="dark"] .access-request-status { color: #c3d9eb; background: #173c5d; }
   html[data-theme="dark"] .access-request-status.status-invited { color: #a4dfbd; background: #173226; }
@@ -551,7 +573,7 @@ td .inline-input { min-height: 30px; }
   .topbar { grid-template-columns: 1fr auto; }
   .top-actions { grid-column: 2; }
   .ghost-button { font-size: 0; padding: 0 10px; }
-  .user { display: none; }
+  .user { display: flex; }
   .mobile-title { margin: 0 auto 10px; max-width: 1280px; display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
   .mobile-title strong { color: #24476f; }
   .header-grid { grid-template-columns: 1fr; }
@@ -571,6 +593,7 @@ td .inline-input { min-height: 30px; }
 
 @media (max-width: 560px) {
   .access-request { grid-template-columns: 1fr; }
+  .users-roles-item { grid-template-columns: 1fr; }
   .access-request-status { justify-self: start; }
   .auth-brand-panel { min-height: 225px; }
   .auth-brand-copy p { font-size: 11px; }

@@ -169,28 +169,36 @@ function LoginScreen({ passwordFlow = null }) {
   </main>;
 }
 
-function PendingAccessScreen({ profileError = false }) {
-  const { user, requestAccess, refreshProfile, signOut } = useAuth();
+function PendingAccessScreen({ knownInactive = false, previouslyActive = false }) {
+  const { user, requestAccess, requestReactivation, refreshProfile, signOut } = useAuth();
   const [busy, setBusy] = useState('');
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(null);
   const [error, setError] = useState('');
 
   const run = async (action) => {
     setBusy(action);
-    setMessage('');
+    setMessage(null);
     setError('');
     try {
       if (action === 'request') {
-        await requestAccess(user.email);
-        setMessage('Solicitud recibida. Si corresponde, recibirás instrucciones por correo tras la revisión.');
+        if (!knownInactive) return;
+        if (previouslyActive) {
+          await requestReactivation();
+          setMessage({ tone: 'success', text: 'Solicitud de reactivación recibida. Un administrador revisará tu acceso; no necesitas esperar un correo.' });
+        } else {
+          await requestAccess(user.email);
+          setMessage({ tone: 'success', text: 'Solicitud de alta recibida. Si corresponde, recibirás instrucciones por correo tras la revisión.' });
+        }
       } else if (action === 'refresh') {
         await refreshProfile();
-        setMessage('Estado comprobado. Tu acceso sigue pendiente de aprobación.');
+        setMessage({ tone: 'warning', text: 'Tu acceso sigue pendiente de aprobación.' });
       } else {
         await signOut();
       }
-    } catch {
-      setError('No se ha podido completar la acción. Inténtalo de nuevo.');
+    } catch (requestError) {
+      setError(requestError?.message === 'registration_processing'
+        ? 'Tu alta inicial sigue en proceso. Comprueba el estado más tarde; todavía no se ha registrado una reactivación.'
+        : 'No se ha podido completar la acción. Inténtalo de nuevo.');
     } finally {
       setBusy('');
     }
@@ -201,15 +209,17 @@ function PendingAccessScreen({ profileError = false }) {
     <section className="auth-form-panel"><div className="auth-card auth-pending-card">
       <div className="auth-card-icon"><ShieldCheck size={22} /></div>
       <span className="auth-card-kicker">ACCESO A LA APLICACIÓN</span>
-      <h2>{profileError ? 'No se pudo comprobar el acceso' : 'Acceso pendiente'}</h2>
-      <p className="auth-intro">{profileError ? 'Comprueba de nuevo el estado de tu cuenta.' : 'Tu cuenta todavía no tiene acceso activo. Un administrador debe aprobarla antes de abrir el editor.'}</p>
+      <h2>{knownInactive ? previouslyActive ? 'Cuenta desactivada' : 'Acceso pendiente' : 'No se pudo comprobar el acceso'}</h2>
+      <p className="auth-intro">{knownInactive
+        ? previouslyActive ? 'Puedes solicitar la reactivación de esta cuenta. Un administrador la revisará sin enviar una nueva invitación.' : 'Tu cuenta todavía no ha sido activada. Solicita el alta para que un administrador la revise y te envíe el enlace inicial.'
+        : 'Comprueba de nuevo el estado de tu cuenta. No puedes enviar una solicitud hasta verificar el perfil.'}</p>
       <p className="auth-pending-email">{user?.email}</p>
       <div className="auth-pending-actions">
-        <button type="button" className="auth-submit-button" disabled={Boolean(busy) || !user?.email} onClick={() => run('request')}>Solicitar aprobación</button>
+        {knownInactive && <button type="button" className="auth-submit-button" disabled={Boolean(busy) || !user?.email} onClick={() => run('request')}>{previouslyActive ? 'Solicitar reactivación' : 'Solicitar acceso'}</button>}
         <button type="button" className="auth-secondary-button" disabled={Boolean(busy)} onClick={() => run('refresh')}>Comprobar acceso</button>
         <button type="button" className="auth-inline-link" disabled={Boolean(busy)} onClick={() => run('signout')}>Cerrar sesión</button>
       </div>
-      {message && <div className="auth-success" role="status">{message}</div>}
+      {message && <div className={message.tone === 'warning' ? 'auth-warning' : 'auth-success'} role="status">{message.text}</div>}
       {error && <div className="auth-error" role="alert">{error}</div>}
     </div><p className="auth-footer">DB DocGen · Evolutivos COBOL</p></section>
   </main>;
@@ -228,6 +238,11 @@ export function AuthGate({ children }) {
   if (!isAuthenticated) return <LoginScreen key="login" />;
   if (configured && passwordFlow) return <LoginScreen key={passwordFlow} passwordFlow={passwordFlow} />;
   if (configured && ((!profile && profileStatus === 'loading') || (profile && profile.id !== user?.id))) return <div className="auth-loading"><LoaderCircle className="auth-spinner" size={28} /><span>Comprobando permisos…</span></div>;
-  if (configured && (profileStatus === 'error' || !profile?.is_active)) return <PendingAccessScreen profileError={profileStatus === 'error'} />;
+  if (configured && (profileStatus === 'error' || !profile?.is_active)) {
+    return <PendingAccessScreen
+      knownInactive={profileStatus === 'ready' && profile?.id === user?.id && profile.is_active === false}
+      previouslyActive={profile?.has_ever_been_active === true}
+    />;
+  }
   return children;
 }

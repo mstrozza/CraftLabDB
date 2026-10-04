@@ -6,8 +6,8 @@ DB DocGen utiliza Supabase para gestionar sesiones, perfiles, solicitudes de alt
 
 1. Crea un proyecto en Supabase.
 2. Abre el editor SQL.
-3. Ejecuta en este orden `supabase/migrations/202609250001_auth_foundation.sql` y `supabase/migrations/202610020001_managed_access.sql`. Si la primera ya está aplicada, ejecuta sólo la segunda.
-4. Comprueba que existen `profiles`, `access_requests`, `documents` y `document_permissions` y que RLS está activado. La segunda migración deja inactivos por defecto sólo a los perfiles nuevos; no cambia el estado de los ya existentes.
+3. Ejecuta los archivos de `supabase/migrations/` **en orden de nombre**, hasta `202610030003_reactivation_flow.sql`, aplicando sólo los pendientes. `202610030002_reactivation_kind.sql` y `202610030003_reactivation_flow.sql` deben ejecutarse en transacciones separadas: PostgreSQL no permite usar `reactivated` en la misma transacción que añade ese valor al enum.
+4. Comprueba que existen `profiles`, `access_requests`, `documents` y `document_permissions` y que RLS está activado. `202610020001` deja inactivos por defecto sólo a los perfiles nuevos. La migración de roles cierra el UPDATE directo de `profiles` para clientes autenticados. La migración de reactivación añade `has_ever_been_active`: marca los perfiles activos y aquellos con invitación completada conocida; la marca queda permanente después de cualquier activación. Una cuenta antigua, ahora inactiva, que sólo fue activada fuera de esos flujos no puede inferirse automáticamente: verifica y corrige ese dato administrativamente antes de ofrecerle reactivación.
 5. En **Authentication > Providers**, mantén habilitado Email y configura Google si se utilizará ese proveedor.
 6. En **Authentication > URL Configuration**, usa como **Site URL** `https://mstrozza.github.io/CraftLabDB/`.
 7. Añade estas URLs exactas en **Redirect URLs** para la versión de GitHub Pages:
@@ -39,22 +39,26 @@ DB DocGen utiliza Supabase para gestionar sesiones, perfiles, solicitudes de alt
 11. En **Authentication > Providers > Email**, desactiva **Allow new users to sign up**. Google puede permanecer habilitado: cualquier cuenta nueva que llegue a existir tendrá perfil inactivo y no verá el editor hasta la aprobación.
 12. Revisa la política de contraseñas y configura SMTP propio antes de utilizar el proyecto en producción.
 
-## 2. Desplegar las funciones de alta
+## 2. Desplegar las funciones de acceso
 
-Con Supabase CLI autenticado y el proyecto enlazado, aplica la migración pendiente y despliega ambas funciones:
+Con Supabase CLI autenticado y el proyecto enlazado, aplica las migraciones pendientes y despliega las cuatro funciones:
 
 ```bash
 supabase link --project-ref <project-ref>
 supabase db push
 supabase functions deploy request-access
 supabase functions deploy review-access-request
+supabase functions deploy manage-user-access
+supabase functions deploy request-reactivation
 ```
 
-Si las migraciones se ejecutaron manualmente en SQL Editor, no las vuelvas a ejecutar con `db push`; comprueba el historial antes. `supabase/config.toml` deja accesible la función pública y desactiva la validación JWT de plataforma para la función de revisión, que valida el token de usuario mediante Supabase Auth y comprueba el perfil de administrador activo en el servidor. La clave `SUPABASE_SERVICE_ROLE_KEY` se utiliza exclusivamente dentro de las funciones; nunca la añadas a `.env.local`, GitHub Variables ni a ninguna variable `VITE_`.
+Si las migraciones se ejecutaron manualmente en SQL Editor, no las vuelvas a ejecutar con `db push`; comprueba el historial antes. `supabase/config.toml` deja pública `request-access` y desactiva la validación JWT de plataforma en las otras funciones porque validan explícitamente el token con Supabase Auth; revisión y gestión comprueban además el perfil admin activo. La clave `SUPABASE_SERVICE_ROLE_KEY` se utiliza exclusivamente dentro de las funciones; nunca la añadas a `.env.local`, GitHub Variables ni a ninguna variable `VITE_`.
 
 Las funciones sólo aceptan orígenes `http://localhost:5173` y `https://mstrozza.github.io` y eligen internamente la raíz de retorno correspondiente (`/` o `/CraftLabDB/`). No aceptan URLs de retorno enviadas por el navegador. Si publicas otra instalación, configura en las funciones `DB_DOCGEN_APP_URLS` con sus URLs raíz HTTPS, separadas por comas y terminadas en `/`; después autoriza sus redirecciones exactas en Supabase.
 
 `request-access` es pública: normaliza y deduplica el correo, registra una solicitud y devuelve una respuesta genérica. No crea una cuenta ni envía correo. La función limita de forma persistente a **10 intentos por hora y huella de IP** mediante una operación SQL atómica. Guarda sólo SHA-256 de IP y sal, nunca la IP en claro. Puedes definir la sal estable `DB_DOCGEN_RATE_LIMIT_SALT` como secreto de la función; si falta, se usa la clave de servicio del entorno como sal de respaldo. Rotar esa clave reinicia efectivamente los buckets. La función espera una IP válida en las cabeceras del proxy de Supabase: prefiere `cf-connecting-ip` y, en su ausencia, toma la última IP válida de `x-forwarded-for` o `x-real-ip`. Si el gateway no proporciona ninguna, responde genéricamente y **no registra la solicitud**. Para una exposición pública, añade límites del gateway y Turnstile/CAPTCHA.
+
+`request-reactivation` es distinta: exige JWT válido y un perfil inactivo que **ya estuvo activo**. Deriva el ID/correo del usuario autenticado, nunca del cuerpo de la petición; no envía correo. Usa la misma huella de IP, pero sólo consume el límite al crear o reabrir una solicitud, no al repetir una pendiente. Una alta inicial ya `processing` devuelve conflicto en lugar de confirmar falsamente la reactivación. La cola de revisión diferencia `registration` y `reactivation`: la segunda se aprueba activando el perfil y cerrando la solicitud como `reactivated` en una transacción, sin invitación ni recuperación de contraseña.
 
 ## 3. Configurar el entorno local
 
@@ -71,10 +75,12 @@ No incluyas nunca una clave secreta ni `service_role` en variables que comiencen
 
 - `admin`: administra usuarios y cualquier documento.
 - `editor`: puede crear documentos y editar los propios o compartidos con permiso `edit`.
-- `reviewer`: queda preparado para el futuro flujo de revisión.
-- `reader`: solo puede leer documentos compartidos.
+- `reviewer`: rol heredado de sólo lectura; no se puede volver a asignar.
+- `reader`: puede navegar, copiar y exportar, pero no editar, crear ni importar.
 
 Los usuarios nuevos se crean como `reader` e inactivos. Sólo un administrador activo puede leer las solicitudes; el navegador no puede insertarlas, modificarlas ni aprobarlas directamente. La función de revisión acepta únicamente un JWT válido de administrador activo y usa una transición condicional para que una solicitud ya revisada no genere otra invitación. El reintento se habilita tras **15 minutos** para `invite_failed` o una operación `processing` vencida; la pantalla muestra el tiempo restante.
+
+Un administrador activo puede abrir **Usuarios y roles** para cambiar el rol entre `admin`, `editor` y `reader` y activar/desactivar otras cuentas. `manage-user-access` valida el JWT y delega en una RPC transaccional; no se puede quitar a sí mismo el acceso admin ni dejar cero administradores activos. Activar directamente una cuenta con reactivación pendiente marca también esa solicitud como `reactivated`. **Solicitudes de acceso** sigue siendo la cola separada para altas iniciales y reactivaciones.
 
 La función conserva `auth_user_id` en cuanto conoce la identidad. Aun así, Supabase Auth no ofrece una clave de idempotencia para el envío de invitaciones o recuperaciones: si acepta el correo y la función falla antes de persistir el resultado, un reintento puede generar un segundo mensaje. El panel advierte de ello. No se marca ninguna solicitud como `invited` antes de que Auth confirme el envío y se active el perfil.
 
@@ -86,7 +92,9 @@ La función conserva `auth_user_id` en cuanto conoce la identidad. Aun así, Sup
 - **Aprobación**: si no existe usuario, envía una invitación de Supabase con retorno `?auth=setup`; si ya existe, envía un enlace de recuperación con retorno `?auth=recovery`. Después activa el perfil. Rechazar no envía correo.
 - **Primer acceso aprobado**: al abrir la invitación, solicita crear y confirmar una contraseña.
 - **Contraseña olvidada**: envía un enlace de recuperación. Al regresar mediante `?auth=recovery`, solicita establecer una contraseña nueva.
-- **Sesión inactiva**: puede solicitar revisión, comprobar de nuevo el estado y cerrar sesión; no ve el editor. Esto también cubre cuentas nuevas de Google.
+- **Sesión inactiva nunca activada**: solicita alta inicial; la aprobación mantiene el enlace de invitación o recuperación por correo. Esto también cubre cuentas nuevas de Google.
+- **Sesión inactiva previamente activa**: solicita reactivación sin correo. Repetir una solicitud pendiente no modifica sus fechas ni consume otro intento; una solicitud terminada se puede reabrir. La aprobación activa el mismo perfil sin Auth mail API; el rechazo mantiene la cuenta inactiva.
+- **Perfil no verificable**: sólo permite comprobar de nuevo el acceso o cerrar sesión; no ofrece ninguna solicitud.
 - **Microsoft**: se mantiene deshabilitado y marcado como «Próximamente».
 
 Las contraseñas se crean y actualizan directamente mediante Supabase Auth. Nunca se guardan en `profiles`, `localStorage` ni en el código de la aplicación.
@@ -102,9 +110,9 @@ En el repositorio de GitHub, selecciona **Settings > Pages > Build and deploymen
 ## 7. Integración incluida
 
 - `src/lib/supabase.js`: cliente público, sesiones persistentes y renovación automática.
-- `src/auth/AuthContext.jsx`: estado de sesión, solicitud de alta, acceso OAuth, correo/contraseña, recuperación, perfil y sesión local de prueba.
-- `src/auth/AuthGate.jsx`: formularios de acceso, solicitud, recuperación y protección del editor frente a perfiles inactivos.
-- `supabase/functions/`: solicitud pública y revisión administrativa de altas.
+- `src/auth/AuthContext.jsx`: estado de sesión, solicitud de alta/reactivación, gestión admin, acceso OAuth, correo/contraseña, recuperación, perfil y sesión local de prueba.
+- `src/auth/AuthGate.jsx`: formularios de acceso, solicitudes, recuperación y protección del editor frente a perfiles inactivos.
+- `supabase/functions/`: solicitud pública de alta, solicitud autenticada de reactivación, revisión administrativa y gestión de roles.
 - `src/data/documentRepository.js`: operaciones tipadas por convención para listar, cargar, crear, actualizar y eliminar documentos.
 - `supabase/migrations/...sql`: tablas, índices, triggers y políticas RLS.
 
