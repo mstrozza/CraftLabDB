@@ -30,6 +30,9 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
+import { SECTION_IDS, documentSectionOrder, instantiateTemplate, pruneDocumentSections } from './data/templateStructure';
+import TemplateCatalog from './data/TemplateCatalog';
+import { getCurrentTemplate, getOwnCurrentTemplate, listAvailableTemplates } from './data/templateRepository';
 
 const DocumentEditContext = createContext(true);
 
@@ -112,6 +115,8 @@ const getTableColumns = (data, key) => data.tableColumns?.[key] ?? createDefault
 
 const createInitialDocument = (authorName = 'Usuario') => ({
   schemaVersion: '1.0',
+  sectionOrder: [...SECTION_IDS],
+  moduleManifest: {},
   tableColumns: createDefaultTableColumns(),
   document: {
     title: 'Validación de nuevo indicador en transferencias recibidas',
@@ -227,6 +232,9 @@ const escapeHtml = (value = '') => String(value)
 
 const normalizeDocument = (source) => {
   const normalized = structuredClone(source);
+  normalized.sectionOrder = documentSectionOrder(normalized);
+  normalized.moduleManifest ??= {};
+  normalized.document ??= {};
   normalized.document.technicalProfileCustomOptions = Object.fromEntries(technicalProfileGroups.map((group) => {
     const customOptions = normalized.document.technicalProfileCustomOptions?.[group.id];
     return [group.id, Array.isArray(customOptions) ? [...new Set(customOptions.map((option) => String(option).trim()).filter(Boolean))] : []];
@@ -304,7 +312,7 @@ const normalizeDocument = (source) => {
       sources: (group.sources ?? [{ id: `data-source-imported-${index + 1}-1`, title: group.title ?? '', items: group.items ?? [] }]).map((source, sourceIndex) => normalizeDataSource(source, `data-source-imported-${index + 1}-${sourceIndex + 1}`)),
     }));
   }
-  return normalized;
+  return pruneDocumentSections(normalized);
 };
 
 const wordTable = (headers, rows) => `
@@ -323,23 +331,23 @@ const buildWordDocument = (data) => {
     ['Aplicación', data.document.application, 'Autor', data.document.author],
     ['Fecha', data.document.date, 'Versión', data.document.version],
   ];
-  const headerTable = `<table>${headerRows.map((row) => `<tr><th>${escapeHtml(row[0])}</th><td>${escapeHtml(row[1])}</td><th>${escapeHtml(row[2])}</th><td>${escapeHtml(row[3])}</td></tr>`).join('')}<tr><th>Perfil técnico</th><td colspan="3">${escapeHtml(data.document.technicalProfile || 'Sin especificar')}</td></tr></table>`;
-  const detail = data.technicalDetail.map((block, index) => `<article><h3>5.${index + 1} ${escapeHtml(block.title)}</h3><p>${escapeHtml(block.content)}</p>${block.codeEnabled && block.code ? `<pre><code>${escapeHtml(block.code)}</code></pre>` : ''}</article>`).join('');
-  const dataGroups = data.dataModel.map((group, index) => `<article><h3>6.${index + 1} ${escapeHtml(group.title)}</h3><p>${escapeHtml(group.description)}</p>${group.sources.map((source) => `<div><h4>${escapeHtml(source.type)} · ${escapeHtml(source.title)}</h4><p>${escapeHtml(source.description)}</p>${wordTable(source.columns.map((column) => ({ key: column.id, label: column.label })), source.items)}</div>`).join('')}</article>`).join('');
-  const content = [
-    section('01', 'Cabecera', headerTable),
-    section('02', 'Histórico de cambios', wordTable(getTableColumns(data, 'history').map(toEditableColumn), data.history)),
-    section('03', 'Resumen del cambio', `<p>${escapeHtml(data.summary) || 'Sin impacto / No aplica.'}</p>`),
-    section('04', 'Componentes afectados', wordTable(getTableColumns(data, 'affectedComponents').map(toEditableColumn), data.affectedComponents)),
-    section('05', 'Detalle técnico', detail || '<p>Sin impacto / No aplica.</p>'),
-    section('06', 'Datos / Modelo de datos', dataGroups || '<p>Sin impacto / No aplica.</p>'),
-    section('07', 'Casos de prueba', wordTable(getTableColumns(data, 'testCases').map(toEditableColumn), data.testCases)),
-    section('08', 'Referencias / Documentación relacionada', wordTable(getTableColumns(data, 'references').map(toEditableColumn), data.references)),
-  ].join('');
-  const payload = JSON.stringify(data).replace(/<\/script/gi, '<\\/script');
+  const headerTable = `<table>${headerRows.map((row) => `<tr><th>${escapeHtml(row[0])}</th><td>${escapeHtml(row[1])}</td><th>${escapeHtml(row[2])}</th><td>${escapeHtml(row[3])}</td></tr>`).join('')}${data.moduleManifest?.['01']?.technicalProfile === false ? '' : `<tr><th>Perfil técnico</th><td colspan="3">${escapeHtml(data.document.technicalProfile || 'Sin especificar')}</td></tr>`}</table>`;
+  const detail = (data.technicalDetail ?? []).map((block, index) => `<article><h3>5.${index + 1} ${escapeHtml(block.title)}</h3><p>${escapeHtml(block.content)}</p>${block.codeEnabled && block.code ? `<pre><code>${escapeHtml(block.code)}</code></pre>` : ''}</article>`).join('');
+  const dataGroups = (data.dataModel ?? []).map((group, index) => `<article><h3>6.${index + 1} ${escapeHtml(group.title)}</h3><p>${escapeHtml(group.description)}</p>${group.sources.map((source) => `<div><h4>${escapeHtml(source.type)} · ${escapeHtml(source.title)}</h4><p>${escapeHtml(source.description)}</p>${wordTable(source.columns.map((column) => ({ key: column.id, label: column.label })), source.items)}</div>`).join('')}</article>`).join('');
+  const sectionBodies = {
+    '01': headerTable,
+    '02': data.moduleManifest?.['02']?.table === false ? '' : wordTable(getTableColumns(data, 'history').map(toEditableColumn), data.history ?? []),
+    '03': `<p>${escapeHtml(data.summary) || 'Sin impacto / No aplica.'}</p>`,
+    '04': data.moduleManifest?.['04']?.table === false ? '' : wordTable(getTableColumns(data, 'affectedComponents').map(toEditableColumn), data.affectedComponents ?? []),
+    '05': detail || '<p>Sin impacto / No aplica.</p>',
+    '06': dataGroups || '<p>Sin impacto / No aplica.</p>',
+    '07': data.moduleManifest?.['07']?.table === false ? '' : wordTable(getTableColumns(data, 'testCases').map(toEditableColumn), data.testCases ?? []),
+    '08': data.moduleManifest?.['08']?.table === false ? '' : wordTable(getTableColumns(data, 'references').map(toEditableColumn), data.references ?? []),
+  };
+  const content = documentSectionOrder(data).map((id) => section(id, sectionDefinitions.find((item) => item.id === id).title, sectionBodies[id])).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     @page{size:A4;margin:18mm}body{font-family:Arial,sans-serif;color:#10264a;font-size:10pt}h1{font-size:18pt;border-bottom:3px solid #0667f5;padding-bottom:10px}h2{font-size:12pt;margin:22px 0 8px;text-transform:uppercase;page-break-after:avoid}h2 span{display:inline-block;padding:5px 7px;color:#fff;background:#0667f5}h3,h4{page-break-after:avoid}h3{font-size:10.5pt;color:#075fdc}h4{font-size:10pt;margin:14px 0 6px;color:#263f63}table{width:100%;border-collapse:collapse}tr{page-break-inside:avoid}th,td{border:1px solid #ccd5e3;padding:6px;text-align:left}th{background:#f3f6fa}p{white-space:pre-wrap;overflow-wrap:anywhere}pre{padding:12px;background:#f2f4f8;border:1px solid #d9e0ea;white-space:pre-wrap;overflow-wrap:anywhere;page-break-inside:auto}section,article{page-break-inside:auto}
-  </style></head><body><h1>${escapeHtml(data.document.ticketId)} · ${escapeHtml(data.document.title)}</h1>${content}<script type="application/json" id="evolutivo-payload">${payload}</script></body></html>`;
+  </style></head><body>${documentSectionOrder(data).includes('01') ? `<h1>${escapeHtml(data.document.ticketId)} · ${escapeHtml(data.document.title)}</h1>` : ''}${content}</body></html>`;
 };
 
 function InlineInput({ value, onChange, ariaLabel, type = 'text', className = '' }) {
@@ -507,6 +515,57 @@ function Modal({ title, children, onClose, className = '', returnFocusRef = null
   );
 }
 
+function NewDocumentChoices({ configured, onBlank, onTemplate, onManage, onClose }) {
+  const [templates, setTemplates] = useState([]);
+  const [loading, setLoading] = useState(configured);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!configured) return;
+    let active = true;
+    listAvailableTemplates().then((rows) => {
+      if (active) setTemplates(rows);
+    }).catch(() => {
+      if (active) setError('No se pudieron cargar las plantillas disponibles.');
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [configured]);
+
+  return <>
+    <p>Elige cómo comenzar el documento.</p>
+    <div className="new-document-options">
+      <button className="new-document-option" type="button" onClick={onBlank}>
+        <FileText size={22} aria-hidden="true" />
+        <span className="new-document-option-content"><strong>Documento en blanco</strong><span>Versión inicial 1.0 · Estructura 01–08</span></span>
+        <ChevronRight size={17} aria-hidden="true" />
+      </button>
+      {templates.map((item) => {
+        const sections = item.version.structure?.sections ?? [];
+        const countNodes = (nodes) => nodes.reduce((total, node) => total + 1 + countNodes(node.children ?? []), 0);
+        const blocks = countNodes(sections) - sections.length;
+        return <button className="new-document-option" type="button" key={item.version.id} onClick={() => onTemplate(item.version.id)}>
+          <BookOpenText size={22} aria-hidden="true" />
+          <span className="new-document-option-content">
+            <strong>{item.version.name}</strong>
+            <span>Versión {item.version.revision} · {item.template_type === 'full' ? 'Completa' : 'Módulo'} · {sections.length} {sections.length === 1 ? 'sección' : 'secciones'} · {blocks} {blocks === 1 ? 'bloque' : 'bloques'}</span>
+            <small>Estructura: {sections.map((section) => section.sectionId).join(', ')}</small>
+            {item.version.category && <small>{item.version.category}</small>}
+            {item.version.description && <small>{item.version.description}</small>}
+          </span>
+          <ChevronRight size={17} aria-hidden="true" />
+        </button>;
+      })}
+    </div>
+    {loading && <p className="new-document-status" role="status">Cargando plantillas disponibles…</p>}
+    {!loading && !error && configured && templates.length === 0 && <p className="new-document-status" role="status">Aún no hay plantillas aprobadas.</p>}
+    {!configured && <p className="new-document-status" role="status">La biblioteca de plantillas no está disponible en este momento.</p>}
+    {error && <p className="new-document-status" role="alert">{error}</p>}
+    <div className="modal-actions"><button className="secondary-button" type="button" onClick={onClose}>Cancelar</button><button className="secondary-button" type="button" onClick={onManage}>Gestionar plantillas</button></div>
+  </>;
+}
+
 const accessRequestLabels = {
   pending: 'Pendiente',
   processing: 'En proceso',
@@ -565,7 +624,6 @@ function AccessRequestsModal({ onClose, returnFocusRef }) {
         const retryable = request.request_kind === 'registration' && (request.status === 'invite_failed' || request.status === 'processing');
         const retryAt = new Date(request.processing_started_at || request.updated_at).getTime() + 15 * 60 * 1000;
         const canRetry = retryable && now >= retryAt;
-        const waitMinutes = Math.max(1, Math.ceil((retryAt - now) / 60000));
         return <div className="access-request" key={request.id}>
         <div className="access-request-details"><strong>{request.email}</strong><span className="access-request-kind">{request.request_kind === 'reactivation' ? 'Reactivación' : 'Alta inicial'}</span><span>Solicitada el {new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(request.requested_at))}</span></div>
         <span className={`access-request-status status-${request.status}`}>{accessRequestLabels[request.status] ?? request.status}</span>
@@ -575,9 +633,7 @@ function AccessRequestsModal({ onClose, returnFocusRef }) {
             <button type="button" disabled={Boolean(busyId)} onClick={() => review(request.id, 'approve')}>Aprobar</button>
             <button type="button" className="access-reject-button" disabled={Boolean(busyId)} onClick={() => review(request.id, 'reject')}>Rechazar</button>
           </>}
-          {retryable && (canRetry
-            ? <button type="button" disabled={Boolean(busyId)} onClick={() => review(request.id, 'retry')}>Reintentar envío</button>
-            : <span>Reintento disponible en {waitMinutes} min</span>)}
+          {canRetry && <button type="button" disabled={Boolean(busyId)} onClick={() => review(request.id, 'retry')}>Reintentar envío</button>}
           {busyId === request.id && <span role="status">Procesando…</span>}
         </div>
       </div>;
@@ -645,8 +701,9 @@ function UsersAndRolesModal({ onClose, returnFocusRef }) {
 }
 
 export default function App() {
-  const { user, profile, profileStatus, role, isDemo, signOut } = useAuth();
+  const { user, profile, profileStatus, role, isDemo, configured, signOut } = useAuth();
   const canEditDocument = profileStatus === 'ready' && profile?.is_active === true && ['admin', 'editor'].includes(role);
+  const canManageUsers = profileStatus === 'ready' && profile?.is_active === true && role === 'admin' && !isDemo;
   const canEditDocumentRef = useRef(canEditDocument);
   useLayoutEffect(() => { canEditDocumentRef.current = canEditDocument; }, [canEditDocument]);
   const loggedUserName = profile?.display_name
@@ -664,6 +721,7 @@ export default function App() {
     ? 'Modo de prueba'
     : ({ admin: 'Administrador', editor: 'Editor técnico', reader: 'Sólo lectura', reviewer: 'Sólo lectura' }[role] ?? 'Usuario autenticado');
   const [data, setData] = useState(() => createInitialDocument(loggedUserName));
+  const visibleSections = documentSectionOrder(data).map((id) => sectionDefinitions.find((section) => section.id === id));
   const [expanded, setExpanded] = useState(() => Object.fromEntries(sectionDefinitions.map(({ id }) => [id, true])));
   const [activeSection, setActiveSection] = useState('01');
   const [activeSubsection, setActiveSubsection] = useState(null);
@@ -671,6 +729,8 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [newModal, setNewModal] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogInitialVersionId, setCatalogInitialVersionId] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [accessRequestsOpen, setAccessRequestsOpen] = useState(false);
   const [usersRolesOpen, setUsersRolesOpen] = useState(false);
@@ -691,7 +751,7 @@ export default function App() {
   const userButtonRef = useRef(null);
   const navigationLock = useRef(false);
   const manualScrollIntent = useRef(false);
-  const themeTransitionTimer = useRef(null);
+  const themeSwitchTimer = useRef(null);
 
   const updatedLabel = useMemo(
     () => new Intl.DateTimeFormat('es-ES', { dateStyle: 'short', timeStyle: 'short' }).format(new Date()),
@@ -719,19 +779,19 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => () => {
-    if (themeTransitionTimer.current) window.clearTimeout(themeTransitionTimer.current);
-    document.documentElement.classList.remove('theme-transitioning');
+    if (themeSwitchTimer.current) window.clearTimeout(themeSwitchTimer.current);
+    document.documentElement.classList.remove('theme-switching');
   }, []);
 
   const toggleTheme = () => {
     const root = document.documentElement;
-    root.classList.add('theme-transitioning');
-    if (themeTransitionTimer.current) window.clearTimeout(themeTransitionTimer.current);
+    if (themeSwitchTimer.current) window.clearTimeout(themeSwitchTimer.current);
+    root.classList.add('theme-switching');
     setTheme((current) => current === 'dark' ? 'light' : 'dark');
-    themeTransitionTimer.current = window.setTimeout(() => {
-      root.classList.remove('theme-transitioning');
-      themeTransitionTimer.current = null;
-    }, 392);
+    themeSwitchTimer.current = window.setTimeout(() => {
+      root.classList.remove('theme-switching');
+      themeSwitchTimer.current = null;
+    }, 220);
   };
 
   useEffect(() => {
@@ -740,19 +800,19 @@ export default function App() {
       frame = 0;
       if (navigationLock.current) return;
       const marker = navigationOffset + 16;
-      let sectionId = sectionDefinitions[0].id;
-      for (const { id } of sectionDefinitions) {
+      let sectionId = visibleSections[0].id;
+      for (const { id } of visibleSections) {
         const section = document.getElementById(`section-${id}`);
         if (section && section.getBoundingClientRect().top <= marker) sectionId = id;
       }
       if (window.scrollY >= document.documentElement.scrollHeight - window.innerHeight - 2) {
-        sectionId = sectionDefinitions.at(-1).id;
+        sectionId = visibleSections.at(-1).id;
       }
       setActiveSection((current) => current === sectionId ? current : sectionId);
 
       const subsectionIds = sectionId === '05'
-        ? data.technicalDetail.map((item) => item.id)
-        : sectionId === '06' ? data.dataModel.map((item) => item.id) : [];
+        ? (data.technicalDetail ?? []).map((item) => item.id)
+        : sectionId === '06' ? (data.dataModel ?? []).map((item) => item.id) : [];
       let subsectionId = null;
       for (const id of subsectionIds) {
         const subsection = document.getElementById(`${sectionId}-${id}`);
@@ -791,7 +851,7 @@ export default function App() {
       window.removeEventListener('keydown', markKeyboardScroll);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [expanded, data.technicalDetail, data.dataModel]);
+  }, [expanded, data.technicalDetail, data.dataModel, data.sectionOrder]);
 
   useLayoutEffect(() => {
     if (!navigationTarget || !expanded[navigationTarget.sectionId]) return undefined;
@@ -961,6 +1021,9 @@ export default function App() {
     if (!canEditDocument) return;
     if (dirty && !window.confirm('Hay cambios no exportados. ¿Quieres continuar y perderlos?')) return;
     setData(emptyDocument(loggedUserName));
+    setActiveSection('01');
+    setActiveSubsection(null);
+    setNavigationTarget(null);
     setTextareaHeights({});
     setDirty(false);
     setNewModal(false);
@@ -968,13 +1031,38 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const openCatalog = (versionId = null) => {
+    setCatalogInitialVersionId(versionId);
+    setNewModal(false);
+    setCatalogOpen(true);
+  };
+
+  const createFromTemplate = async (versionId, selection, source = 'available') => {
+    if (!canEditDocumentRef.current) throw new Error('No tienes permiso de edición.');
+    const structure = source === 'mine' ? await getOwnCurrentTemplate(versionId) : await getCurrentTemplate(versionId);
+    const next = instantiateTemplate(structure, selection, { display_name: loggedUserName }, emptyDocument(loggedUserName));
+    if (!canEditDocumentRef.current) throw new Error('No tienes permiso de edición.');
+    if (dirty && !window.confirm('Hay cambios no exportados. ¿Quieres continuar y perderlos?')) return;
+    setData(next);
+    setActiveSection(next.sectionOrder[0]);
+    setActiveSubsection(null);
+    setNavigationTarget(null);
+    setExpanded(Object.fromEntries(next.sectionOrder.map((id) => [id, true])));
+    setTextareaHeights({});
+    setDirty(false);
+    setCatalogOpen(false);
+    notify('Documento creado desde plantilla');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const download = (content, mime, extension) => {
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
-    const safeId = data.document.ticketId.replace(/[^a-z0-9-_]/gi, '_') || 'EVOLUTIVO';
+    const hasHeader = documentSectionOrder(data).includes('01');
+    const safeId = hasHeader ? (data.document.ticketId.replace(/[^a-z0-9-_]/gi, '_') || 'EVOLUTIVO') : 'DOCUMENTO';
     anchor.href = url;
-    anchor.download = `${safeId}_v${data.document.version}.${extension}`;
+    anchor.download = `${safeId}${hasHeader ? `_v${data.document.version}` : ''}.${extension}`;
     anchor.click();
     URL.revokeObjectURL(url);
     setDirty(false);
@@ -982,7 +1070,7 @@ export default function App() {
   };
 
   const exportJson = () => {
-    download(JSON.stringify(data, null, 2), 'application/json', 'json');
+    download(JSON.stringify(pruneDocumentSections(data), null, 2), 'application/json', 'json');
     notify('Copia editable exportada');
   };
 
@@ -994,7 +1082,7 @@ export default function App() {
   const exportPdf = () => {
     setExportOpen(false);
     setDirty(false);
-    setExpanded(Object.fromEntries(sectionDefinitions.map(({ id }) => [id, true])));
+    setExpanded(Object.fromEntries(visibleSections.map(({ id }) => [id, true])));
     setTimeout(() => window.print(), 120);
   };
 
@@ -1016,15 +1104,26 @@ export default function App() {
       const importedDocument = normalizeDocument(parsed);
       pendingImportRef.current = importedDocument;
       setData((current) => canEditDocumentRef.current ? importedDocument : current);
+      setActiveSection(importedDocument.sectionOrder[0]);
+      setActiveSubsection(null);
+      setNavigationTarget(null);
     } catch {
       notify('No se ha podido importar el archivo');
     }
   };
 
   const renderStandardTable = (key, createRow, addLabel) => (
+    data.moduleManifest?.[{ history: '02', affectedComponents: '04', testCases: '07', references: '08' }[key]]?.table === false
+      ? (canEditDocument ? <button className="text-action no-print" type="button" onClick={() => mutate((next) => {
+        const sectionId = { history: '02', affectedComponents: '04', testCases: '07', references: '08' }[key];
+        next.moduleManifest[sectionId] = { table: true };
+        next.tableColumns[key] = createDefaultTableColumns()[key];
+        next[key] = [];
+      })}><Plus size={15} />Añadir tabla</button> : null)
+      :
     <EditableTable
       columns={getTableColumns(data, key).map(toEditableColumn)}
-      rows={data[key]}
+      rows={data[key] ?? []}
       onCellChange={(rowIndex, field, value) => setArrayCell(key, rowIndex, field, value)}
       onAdd={() => addTableRow(key, createRow())}
       onRemove={(rowIndex) => removeRow(key, rowIndex)}
@@ -1048,8 +1147,8 @@ export default function App() {
           <label><span>Fecha</span><InlineInput type="date" value={data.document.date} ariaLabel="Fecha" onChange={(value) => setDocumentField('date', value)} /></label>
           <div className="header-field"><span>Versión</span><div className="version-control"><InlineInput value={data.document.version} ariaLabel="Versión" onChange={(value) => setDocumentField('version', value)} /><div className="version-buttons no-print"><button type="button" onClick={() => changeVersion(-0.1)} aria-label="Reducir versión en 0,1"><Minus size={12} /></button><button type="button" onClick={() => changeVersion(0.1)} aria-label="Incrementar versión en 0,1"><Plus size={12} /></button></div></div></div>
         </div>
-        <div className="mobile-profile-control no-print"><span>Perfil técnico</span>{renderProfilePickerTrigger()}</div>
-        <div className="print-profile"><strong>Perfil técnico</strong><span>{data.document.technicalProfile || 'Sin especificar'}</span></div>
+        {data.moduleManifest?.['01']?.technicalProfile !== false && <div className="mobile-profile-control no-print"><span>Perfil técnico</span>{renderProfilePickerTrigger()}</div>}
+        {data.moduleManifest?.['01']?.technicalProfile !== false && <div className="print-profile"><strong>Perfil técnico</strong><span>{data.document.technicalProfile || 'Sin especificar'}</span></div>}
       </>
     );
     if (id === '02') return renderStandardTable('history', () => ({ version: '', date: new Date().toISOString().slice(0, 10), author: data.document.author, description: '' }), 'Añadir versión');
@@ -1136,7 +1235,7 @@ export default function App() {
           <div className="brand">Deutsche Bank <span className="brand-mark"><i /></span></div>
           <button className="new-button" type="button" disabled={!canEditDocument} onClick={() => setNewModal(true)}><Plus size={16} />Nuevo</button>
         </div>
-        <div className="breadcrumb"><span>Evolutivos</span><ChevronRight size={15} /><strong>{data.document.ticketId}</strong>{dirty && <i title="Cambios sin exportar" />}</div>
+        <div className="breadcrumb"><span>Evolutivos</span>{data.sectionOrder.includes('01') && <><ChevronRight size={15} /><strong>{data.document.ticketId}</strong></>}{dirty && <i title="Cambios sin exportar" />}</div>
         <div className="top-actions">
           <input ref={fileInput} className="file-input" type="file" disabled={!canEditDocument} accept=".json,.doc,.docx,.pdf" onChange={handleImport} />
           <button className="ghost-button" type="button" disabled={!canEditDocument} onClick={() => fileInput.current?.click()}><Upload size={16} />Importar</button>
@@ -1155,8 +1254,8 @@ export default function App() {
             {userMenuOpen && <div className="user-popover" role="menu">
               <div className="user-popover-profile"><span>{userInitials}</span><div><strong>{loggedUserName}</strong><small>{profile?.email || user?.email}</small></div></div>
               <div className="user-role-label">{roleLabel}</div>
-              {role === 'admin' && !isDemo && <button className="user-admin-action" type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); setAccessRequestsOpen(true); }}><ShieldCheck size={15} />Solicitudes de acceso</button>}
-              {role === 'admin' && !isDemo && <button className="user-admin-action" type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); setUsersRolesOpen(true); }}><Users size={15} />Usuarios y roles</button>}
+              {canManageUsers && <button className="user-admin-action" type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); setAccessRequestsOpen(true); }}><ShieldCheck size={15} />Solicitudes de acceso</button>}
+              {canManageUsers && <button className="user-admin-action" type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); setUsersRolesOpen(true); }}><Users size={15} />Usuarios y roles</button>}
               <button type="button" role="menuitem" onClick={signOut}><LogOut size={15} />Cerrar sesión</button>
             </div>}
           </div>
@@ -1166,23 +1265,25 @@ export default function App() {
       <aside className="sidebar no-print">
         <div className="sidebar-title">Índice</div>
         <nav>
-          {sectionDefinitions.map(({ id, title, icon: Icon }) => (
+          {visibleSections.map(({ id, title, icon: Icon }) => (
             <div key={id}>
               <button className={`nav-item ${activeSection === id ? 'active' : ''}`} type="button" onClick={() => goTo(id)}><Icon size={17} /><span className="nav-number">{id}</span><span>{title}</span>{(id === '05' || id === '06') && <ChevronDown size={14} className="nav-chevron" />}</button>
-              {id === '05' && expanded['05'] && <div className="subnav">{data.technicalDetail.map((item, index) => <button className={activeSection === '05' && activeSubsection === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => goToSubsection('05', item.id)}><span>5.{index + 1}</span>{item.title}</button>)}</div>}
-              {id === '06' && expanded['06'] && <div className="subnav">{data.dataModel.map((group, index) => <button className={activeSection === '06' && activeSubsection === group.id ? 'active' : ''} type="button" key={group.id} onClick={() => goToSubsection('06', group.id)}><span>6.{index + 1}</span>{group.title}</button>)}</div>}
+              {id === '05' && expanded['05'] && <div className="subnav">{(data.technicalDetail ?? []).map((item, index) => <button className={activeSection === '05' && activeSubsection === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => goToSubsection('05', item.id)}><span>5.{index + 1}</span>{item.title}</button>)}</div>}
+              {id === '06' && expanded['06'] && <div className="subnav">{(data.dataModel ?? []).map((group, index) => <button className={activeSection === '06' && activeSubsection === group.id ? 'active' : ''} type="button" key={group.id} onClick={() => goToSubsection('06', group.id)}><span>6.{index + 1}</span>{group.title}</button>)}</div>}
             </div>
           ))}
         </nav>
-        <div className="document-info">
+        {data.sectionOrder.includes('01') && <div className="document-info">
           <h3>Información del documento</h3>
           <dl>
-            <div className="profile-info-row"><dt>Perfil técnico</dt><dd>{renderProfilePickerTrigger()}</dd></div>
+            {data.moduleManifest?.['01']?.technicalProfile !== false && <div className="profile-info-row"><dt>Perfil técnico</dt><dd>{renderProfilePickerTrigger()}</dd></div>}
+            {data.moduleManifest?.['01']?.technicalProfile === false && canEditDocument && <div><dt>Perfil técnico</dt><dd><button className="text-action" type="button" onClick={() => { mutate((next) => { next.moduleManifest['01'] = { technicalProfile: true }; }); setProfileModalOpen(true); }}>+ Añadir</button></dd></div>}
             <div><dt>Estado</dt><dd><span className="status-badge">{canEditDocument ? 'En edición' : 'Sólo lectura'}</span></dd></div>
             <div><dt>Última actualización</dt><dd>{updatedLabel}</dd></div>
             <div><dt>Autor</dt><dd>{data.document.author || 'Sin asignar'}</dd></div>
           </dl>
-        </div>
+        </div>}
+        <div className="template-sidebar-control"><button className="template-sidebar-entry" type="button" onClick={() => openCatalog()}><BookOpenText size={16} />Plantillas</button></div>
         <div className="appearance-control">
           <span>Apariencia</span>
           <button className={`theme-switch ${theme}`} type="button" role="switch" aria-checked={theme === 'dark'} aria-label={theme === 'dark' ? 'Cambiar al tema claro' : 'Cambiar al tema oscuro'} title={theme === 'dark' ? 'Cambiar al tema claro' : 'Cambiar al tema oscuro'} onClick={toggleTheme}>
@@ -1195,17 +1296,18 @@ export default function App() {
       </aside>
 
       <main className="document-area">
-        <div className="mobile-title no-print"><span>Documento activo</span><strong>{data.document.ticketId}</strong></div>
-        {sectionDefinitions.map((definition) => (
+        <div className="mobile-title no-print"><span>Documento activo</span>{data.sectionOrder.includes('01') && <strong>{data.document.ticketId}</strong>}</div>
+        {visibleSections.map((definition) => (
           <SectionCard key={definition.id} definition={definition} expanded={expanded[definition.id]} onToggle={() => setExpanded((current) => ({ ...current, [definition.id]: !current[definition.id] }))}>
             {renderSection(definition.id)}
           </SectionCard>
         ))}
       </main>
 
-      {newModal && canEditDocument && <Modal title="Crear nuevo evolutivo" onClose={() => setNewModal(false)}><p>Se creará un documento limpio con las ocho secciones normalizadas.</p><div className="modal-summary"><FileText size={22} /><div><strong>Plantilla técnica COBOL</strong><span>Versión inicial 1.0 · Estructura 01-08</span></div></div><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setNewModal(false)}>Cancelar</button><button className="primary-button" type="button" onClick={createNew}>Crear documento</button></div></Modal>}
-      {accessRequestsOpen && role === 'admin' && <AccessRequestsModal onClose={() => setAccessRequestsOpen(false)} returnFocusRef={userButtonRef} />}
-      {usersRolesOpen && role === 'admin' && <UsersAndRolesModal onClose={() => setUsersRolesOpen(false)} returnFocusRef={userButtonRef} />}
+      {newModal && canEditDocument && <Modal title="Crear nuevo evolutivo" className="new-document-modal" onClose={() => setNewModal(false)}><NewDocumentChoices configured={configured && profileStatus === 'ready' && profile?.is_active} onBlank={createNew} onTemplate={openCatalog} onManage={() => openCatalog()} onClose={() => setNewModal(false)} /></Modal>}
+      {catalogOpen && <Modal title="Biblioteca de plantillas" className="template-modal" onClose={() => setCatalogOpen(false)}><TemplateCatalog document={data} user={user} role={role} canEdit={canEditDocument} configured={configured && profileStatus === 'ready' && profile?.is_active} initialVersionId={catalogInitialVersionId} onCreate={createFromTemplate} /></Modal>}
+      {accessRequestsOpen && canManageUsers && <AccessRequestsModal onClose={() => setAccessRequestsOpen(false)} returnFocusRef={userButtonRef} />}
+      {usersRolesOpen && canManageUsers && <UsersAndRolesModal onClose={() => setUsersRolesOpen(false)} returnFocusRef={userButtonRef} />}
       {profileModalOpen && canEditDocument && <Modal title="Perfil técnico" className="profile-modal" onClose={() => setProfileModalOpen(false)}>
         <p>Selecciona las tecnologías y los procesos bancarios que intervienen en este evolutivo.</p>
         <div className="profile-groups">

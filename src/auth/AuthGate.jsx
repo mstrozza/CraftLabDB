@@ -237,10 +237,11 @@ export function AuthGate({ children }) {
   if (status === 'loading') return <div className="auth-loading"><LoaderCircle className="auth-spinner" size={28} /><span>Comprobando sesión…</span></div>;
   if (!isAuthenticated) return <LoginScreen key="login" />;
   if (configured && passwordFlow) return <LoginScreen key={passwordFlow} passwordFlow={passwordFlow} />;
-  if (configured && ((!profile && profileStatus === 'loading') || (profile && profile.id !== user?.id))) return <div className="auth-loading"><LoaderCircle className="auth-spinner" size={28} /><span>Comprobando permisos…</span></div>;
-  if (configured && (profileStatus === 'error' || !profile?.is_active)) {
+  const matchingProfile = profile?.id === user?.id;
+  if (configured && (!matchingProfile && profileStatus === 'loading')) return <div className="auth-loading"><LoaderCircle className="auth-spinner" size={28} /><span>Comprobando permisos…</span></div>;
+  if (configured && (!matchingProfile || !profile?.is_active)) {
     return <PendingAccessScreen
-      knownInactive={profileStatus === 'ready' && profile?.id === user?.id && profile.is_active === false}
+      knownInactive={profileStatus === 'ready' && matchingProfile && profile.is_active === false}
       previouslyActive={profile?.has_ever_been_active === true}
     />;
   }

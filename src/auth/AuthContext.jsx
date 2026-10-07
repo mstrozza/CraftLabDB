@@ -41,6 +41,8 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [profileStatus, setProfileStatus] = useState(isSupabaseConfigured ? 'loading' : 'ready');
   const profileLoadId = useRef(0);
+  const sessionUserId = useRef(null);
+  const authEventId = useRef(0);
   const [status, setStatus] = useState(() => {
     if (isSupabaseConfigured) return 'loading';
     return readDemoUser() ? 'authenticated' : 'anonymous';
@@ -64,13 +66,13 @@ export function AuthProvider({ children }) {
         .eq('id', userId)
         .maybeSingle();
       if (profileError) throw profileError;
-      if (loadId === profileLoadId.current) {
+      if (loadId === profileLoadId.current && userId === sessionUserId.current) {
         setProfile(data);
         setProfileStatus('ready');
       }
       return data;
     } catch (profileError) {
-      if (loadId === profileLoadId.current) setProfileStatus('error');
+      if (loadId === profileLoadId.current && userId === sessionUserId.current) setProfileStatus('error');
       throw profileError;
     }
   }, []);
@@ -79,17 +81,36 @@ export function AuthProvider({ children }) {
     if (!supabase) return undefined;
 
     let active = true;
+    const acceptSession = (nextSession) => {
+      const nextUserId = nextSession?.user?.id ?? null;
+      if (sessionUserId.current !== nextUserId) {
+        sessionUserId.current = nextUserId;
+        profileLoadId.current += 1;
+        setProfile(null);
+        setProfileStatus(nextUserId ? 'loading' : 'ready');
+      }
+      setSession(nextSession);
+      setError(null);
+      setStatus(nextSession ? 'authenticated' : 'anonymous');
+      if (nextUserId) {
+        window.setTimeout(() => {
+          if (active && sessionUserId.current === nextUserId) {
+            loadProfile(nextUserId).catch((profileError) => {
+              if (active && sessionUserId.current === nextUserId) setError(profileError);
+            });
+          }
+        }, 0);
+      }
+    };
     const initialise = async () => {
+      const startingEventId = authEventId.current;
       try {
         const { data, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
-        if (!active) return;
-        setSession(data.session);
-        if (data.session?.user) await loadProfile(data.session.user.id);
-        else setProfileStatus('ready');
-        if (active) setStatus(data.session ? 'authenticated' : 'anonymous');
+        if (!active || startingEventId !== authEventId.current) return;
+        acceptSession(data.session);
       } catch (initialisationError) {
-        if (!active) return;
+        if (!active || startingEventId !== authEventId.current) return;
         setError(initialisationError);
         setStatus('error');
       }
@@ -99,23 +120,14 @@ export function AuthProvider({ children }) {
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return;
-      setSession(nextSession);
-      setError(null);
-      setStatus(nextSession ? 'authenticated' : 'anonymous');
-      profileLoadId.current += 1;
-      setProfile(null);
-      setProfileStatus(nextSession ? 'loading' : 'ready');
+      authEventId.current += 1;
+      acceptSession(nextSession);
       if (event === 'PASSWORD_RECOVERY') setPasswordFlow('recovery');
-      window.setTimeout(() => {
-        if (!active) return;
-        if (nextSession?.user) {
-          loadProfile(nextSession.user.id).catch((profileError) => setError(profileError));
-        }
-      }, 0);
     });
 
     return () => {
       active = false;
+      profileLoadId.current += 1;
       listener.subscription.unsubscribe();
     };
   }, [loadProfile]);
@@ -186,39 +198,39 @@ export function AuthProvider({ children }) {
   }, [profile, profileStatus, session?.user]);
 
   const listAccessRequests = useCallback(async () => {
-    if (!supabase || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
+    if (!supabase || profileStatus !== 'ready' || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
     const { data, error: listError } = await supabase.from('access_requests')
       .select('id, email, request_kind, status, requested_at, updated_at, reviewed_at, processing_started_at, attempts, error')
       .order('requested_at', { ascending: false });
     if (listError) throw listError;
     return data ?? [];
-  }, [profile]);
+  }, [profile, profileStatus]);
 
   const reviewAccessRequest = useCallback(async (id, action) => {
-    if (!supabase || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
+    if (!supabase || profileStatus !== 'ready' || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
     const { data, error: reviewError } = await supabase.functions.invoke('review-access-request', {
       body: { id, action },
     });
     if (reviewError) throw reviewError;
     return data;
-  }, [profile]);
+  }, [profile, profileStatus]);
 
   const listUsers = useCallback(async () => {
-    if (!supabase || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
+    if (!supabase || profileStatus !== 'ready' || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
     const { data, error: listError } = await supabase.from('profiles')
       .select('id, display_name, email, role, is_active, created_at, updated_at')
       .order('created_at', { ascending: false });
     if (listError) throw listError;
     return data ?? [];
-  }, [profile]);
+  }, [profile, profileStatus]);
 
   const manageUserAccess = useCallback(async (targetId, action, value) => {
-    if (!supabase || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
+    if (!supabase || profileStatus !== 'ready' || profile?.role !== 'admin' || !profile.is_active) throw new Error('Permiso insuficiente.');
     const body = { targetId, action, ...(action === 'set_role' ? { role: value } : { active: value }) };
     const { error: manageError } = await supabase.functions.invoke('manage-user-access', { body });
     if (manageError) throw manageError;
     return listUsers();
-  }, [listUsers, profile]);
+  }, [listUsers, profile, profileStatus]);
 
   const signInWithPassword = useCallback(async (email, password) => {
     if (!supabase) throw new Error('Configura Supabase para habilitar el acceso por correo.');
