@@ -1,0 +1,29 @@
+name: Test account lifecycle
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  deterministic-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: account-lifecycle-safe-summary
+          path: test-results/safe-summary.json
+          if-no-files-found: ignore

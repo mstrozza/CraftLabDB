@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { SECTION_IDS, documentSectionOrder, instantiateTemplate, pruneDocumentSections } from './data/templateStructure';
+import { BUILT_IN_SECTION_TITLES, CUSTOM_BLOCKS, createCustomSection, moveSection, newId, normalizeSectionModel, removeSection, sectionOrdinal, visibleSectionIds } from './data/documentSections';
 import TemplateCatalog from './data/TemplateCatalog';
 import { getCurrentTemplate, getOwnCurrentTemplate, listAvailableTemplates } from './data/templateRepository';
 
@@ -114,8 +115,10 @@ const toEditableColumn = (column) => ({
 const getTableColumns = (data, key) => data.tableColumns?.[key] ?? createDefaultTableColumns()[key];
 
 const createInitialDocument = (authorName = 'Usuario') => ({
-  schemaVersion: '1.0',
+  schemaVersion: '1.1',
   sectionOrder: [...SECTION_IDS],
+  sectionMeta: Object.fromEntries(SECTION_IDS.map((id) => [id, { title: BUILT_IN_SECTION_TITLES[id], active: true, kind: 'builtIn' }])),
+  customSections: {},
   moduleManifest: {},
   tableColumns: createDefaultTableColumns(),
   document: {
@@ -231,7 +234,7 @@ const escapeHtml = (value = '') => String(value)
   .replaceAll('"', '&quot;');
 
 const normalizeDocument = (source) => {
-  const normalized = structuredClone(source);
+  const normalized = normalizeSectionModel(source);
   normalized.sectionOrder = documentSectionOrder(normalized);
   normalized.moduleManifest ??= {};
   normalized.document ??= {};
@@ -332,8 +335,8 @@ const buildWordDocument = (data) => {
     ['Fecha', data.document.date, 'Versión', data.document.version],
   ];
   const headerTable = `<table>${headerRows.map((row) => `<tr><th>${escapeHtml(row[0])}</th><td>${escapeHtml(row[1])}</td><th>${escapeHtml(row[2])}</th><td>${escapeHtml(row[3])}</td></tr>`).join('')}${data.moduleManifest?.['01']?.technicalProfile === false ? '' : `<tr><th>Perfil técnico</th><td colspan="3">${escapeHtml(data.document.technicalProfile || 'Sin especificar')}</td></tr>`}</table>`;
-  const detail = (data.technicalDetail ?? []).map((block, index) => `<article><h3>5.${index + 1} ${escapeHtml(block.title)}</h3><p>${escapeHtml(block.content)}</p>${block.codeEnabled && block.code ? `<pre><code>${escapeHtml(block.code)}</code></pre>` : ''}</article>`).join('');
-  const dataGroups = (data.dataModel ?? []).map((group, index) => `<article><h3>6.${index + 1} ${escapeHtml(group.title)}</h3><p>${escapeHtml(group.description)}</p>${group.sources.map((source) => `<div><h4>${escapeHtml(source.type)} · ${escapeHtml(source.title)}</h4><p>${escapeHtml(source.description)}</p>${wordTable(source.columns.map((column) => ({ key: column.id, label: column.label })), source.items)}</div>`).join('')}</article>`).join('');
+  const detail = (data.technicalDetail ?? []).map((block, index) => `<article><h3>${Number(sectionOrdinal(data, '05'))}.${index + 1} ${escapeHtml(block.title)}</h3><p>${escapeHtml(block.content)}</p>${block.codeEnabled && block.code ? `<pre><code>${escapeHtml(block.code)}</code></pre>` : ''}</article>`).join('');
+  const dataGroups = (data.dataModel ?? []).map((group, index) => `<article><h3>${Number(sectionOrdinal(data, '06'))}.${index + 1} ${escapeHtml(group.title)}</h3><p>${escapeHtml(group.description)}</p>${group.sources.map((source) => `<div><h4>${escapeHtml(source.type)} · ${escapeHtml(source.title)}</h4><p>${escapeHtml(source.description)}</p>${wordTable(source.columns.map((column) => ({ key: column.id, label: column.label })), source.items)}</div>`).join('')}</article>`).join('');
   const sectionBodies = {
     '01': headerTable,
     '02': data.moduleManifest?.['02']?.table === false ? '' : wordTable(getTableColumns(data, 'history').map(toEditableColumn), data.history ?? []),
@@ -344,10 +347,20 @@ const buildWordDocument = (data) => {
     '07': data.moduleManifest?.['07']?.table === false ? '' : wordTable(getTableColumns(data, 'testCases').map(toEditableColumn), data.testCases ?? []),
     '08': data.moduleManifest?.['08']?.table === false ? '' : wordTable(getTableColumns(data, 'references').map(toEditableColumn), data.references ?? []),
   };
-  const content = documentSectionOrder(data).map((id) => section(id, sectionDefinitions.find((item) => item.id === id).title, sectionBodies[id])).join('');
+  const customBody = (id) => {
+    const block = data.customSections[id];
+    const ordinal = Number(sectionOrdinal(data, id));
+    return block.blocks.map((key) => {
+      if (key === 'description') return `<article><h3>Descripción</h3><p>${escapeHtml(block.description)}</p></article>`;
+      if (key === 'subsections') return block.subsections.map((item, index) => `<article><h3>${ordinal}.${index + 1} ${escapeHtml(item.title)}</h3><p>${escapeHtml(item.content)}</p></article>`).join('');
+      if (key === 'table') return `<article><h3>Tabla</h3>${wordTable(block.table.columns.map((column) => ({ key: column.id, label: column.label })), block.table.rows)}</article>`;
+      return `<article><h3>COBOL</h3><pre><code>${escapeHtml(block.cobol)}</code></pre></article>`;
+    }).join('');
+  };
+  const content = visibleSectionIds(data).map((id) => section(sectionOrdinal(data, id), data.sectionMeta[id].title, data.sectionMeta[id].kind === 'custom' ? customBody(id) : sectionBodies[id])).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     @page{size:A4;margin:18mm}body{font-family:Arial,sans-serif;color:#10264a;font-size:10pt}h1{font-size:18pt;border-bottom:3px solid #0667f5;padding-bottom:10px}h2{font-size:12pt;margin:22px 0 8px;text-transform:uppercase;page-break-after:avoid}h2 span{display:inline-block;padding:5px 7px;color:#fff;background:#0667f5}h3,h4{page-break-after:avoid}h3{font-size:10.5pt;color:#075fdc}h4{font-size:10pt;margin:14px 0 6px;color:#263f63}table{width:100%;border-collapse:collapse}tr{page-break-inside:avoid}th,td{border:1px solid #ccd5e3;padding:6px;text-align:left}th{background:#f3f6fa}p{white-space:pre-wrap;overflow-wrap:anywhere}pre{padding:12px;background:#f2f4f8;border:1px solid #d9e0ea;white-space:pre-wrap;overflow-wrap:anywhere;page-break-inside:auto}section,article{page-break-inside:auto}
-  </style></head><body>${documentSectionOrder(data).includes('01') ? `<h1>${escapeHtml(data.document.ticketId)} · ${escapeHtml(data.document.title)}</h1>` : ''}${content}</body></html>`;
+  </style></head><body>${visibleSectionIds(data).includes('01') ? `<h1>${escapeHtml(data.document.ticketId)} · ${escapeHtml(data.document.title)}</h1>` : ''}${content}</body></html>`;
 };
 
 function InlineInput({ value, onChange, ariaLabel, type = 'text', className = '' }) {
@@ -450,20 +463,37 @@ function EditableTable({ columns, rows, onCellChange, onAdd, onRemove, onMove, a
   );
 }
 
-function SectionCard({ definition, expanded, onToggle, children }) {
+function SectionCard({ definition, ordinal, expanded, onToggle, onTitleChange, onMove, onDeactivate, onDelete, first, last, children }) {
+  const canEdit = useContext(DocumentEditContext);
+  const [draftTitle, setDraftTitle] = useState(definition.title);
+  useEffect(() => setDraftTitle(definition.title), [definition.title]);
+  const commitTitle = () => {
+    const title = draftTitle.trim();
+    if (title) onTitleChange(title);
+    else setDraftTitle(definition.title);
+  };
   return (
     <section id={`section-${definition.id}`} className="section-card">
       <header className="section-header">
         <div className="section-title">
-          <span className="section-number">{definition.id}</span>
+          <span className="section-number">{ordinal}</span>
           <button className="collapse-button" type="button" onClick={onToggle} aria-label={`${expanded ? 'Ocultar' : 'Mostrar'} detalle de ${definition.title}`}>
             {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           </button>
-          <h2>{definition.title}</h2>
+          {canEdit ? <input className="section-title-input" value={draftTitle} maxLength={160} aria-label={`Título de sección ${ordinal}`} onChange={(event) => setDraftTitle(event.target.value)} onBlur={commitTitle} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setDraftTitle(definition.title); event.currentTarget.blur(); } }} /> : <h2 className="section-title-display">{definition.title}</h2>}
+          <h2 className="print-section-title" aria-hidden="true">{draftTitle.trim() || definition.title}</h2>
         </div>
-        <button className={`switch no-print ${expanded ? 'on' : ''}`} type="button" onClick={onToggle} role="switch" aria-checked={expanded} aria-label={`Mostrar u ocultar detalle de ${definition.title}`}><span /></button>
+        <div className="section-header-actions no-print">
+          {canEdit && <>
+            <button type="button" onClick={() => onMove(-1)} disabled={first} aria-label={`Subir sección ${definition.title}`} title="Subir sección"><ArrowUp size={15} /></button>
+            <button type="button" onClick={() => onMove(1)} disabled={last} aria-label={`Bajar sección ${definition.title}`} title="Bajar sección"><ArrowDown size={15} /></button>
+            <button type="button" onClick={onDeactivate} aria-label={`Desactivar sección ${definition.title}`} title="Desactivar sección"><Minus size={15} /></button>
+            <button className="delete-button" type="button" onClick={onDelete} aria-label={`Eliminar sección ${definition.title}`} title="Eliminar sección"><Trash2 size={15} /></button>
+          </>}
+          <button className={`switch ${expanded ? 'on' : ''}`} type="button" onClick={onToggle} role="switch" aria-checked={expanded} aria-label={`Mostrar u ocultar detalle de ${definition.title}`}><span /></button>
+        </div>
       </header>
-      {expanded && <div className="section-content">{children}</div>}
+      <div className={`section-content ${expanded ? '' : 'collapsed'}`}>{children}</div>
     </section>
   );
 }
@@ -721,7 +751,12 @@ export default function App() {
     ? 'Modo de prueba'
     : ({ admin: 'Administrador', editor: 'Editor técnico', reader: 'Sólo lectura', reviewer: 'Sólo lectura' }[role] ?? 'Usuario autenticado');
   const [data, setData] = useState(() => createInitialDocument(loggedUserName));
-  const visibleSections = documentSectionOrder(data).map((id) => sectionDefinitions.find((section) => section.id === id));
+  const visibleSections = visibleSectionIds(data).map((id) => ({
+    id, title: data.sectionMeta?.[id]?.title ?? BUILT_IN_SECTION_TITLES[id],
+    icon: sectionDefinitions.find((section) => section.id === id)?.icon ?? FileText,
+    ordinal: sectionOrdinal(data, id),
+  }));
+  const inactiveSections = data.sectionOrder.filter((id) => data.sectionMeta?.[id]?.active === false);
   const [expanded, setExpanded] = useState(() => Object.fromEntries(sectionDefinitions.map(({ id }) => [id, true])));
   const [activeSection, setActiveSection] = useState('01');
   const [activeSubsection, setActiveSubsection] = useState(null);
@@ -729,6 +764,10 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [newModal, setNewModal] = useState(false);
+  const [addSectionOpen, setAddSectionOpen] = useState(false);
+  const [newSectionTitle, setNewSectionTitle] = useState('');
+  const [newSectionBlocks, setNewSectionBlocks] = useState(['description']);
+  const [sectionFormError, setSectionFormError] = useState('');
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [catalogInitialVersionId, setCatalogInitialVersionId] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -750,6 +789,7 @@ export default function App() {
   const pendingImportRef = useRef(null);
   const userButtonRef = useRef(null);
   const navigationLock = useRef(false);
+  const draggedSectionId = useRef(null);
   const manualScrollIntent = useRef(false);
   const themeSwitchTimer = useRef(null);
 
@@ -800,19 +840,20 @@ export default function App() {
       frame = 0;
       if (navigationLock.current) return;
       const marker = navigationOffset + 16;
-      let sectionId = visibleSections[0].id;
+      let sectionId = visibleSections[0]?.id ?? null;
       for (const { id } of visibleSections) {
         const section = document.getElementById(`section-${id}`);
         if (section && section.getBoundingClientRect().top <= marker) sectionId = id;
       }
-      if (window.scrollY >= document.documentElement.scrollHeight - window.innerHeight - 2) {
+      if (visibleSections.length && window.scrollY >= document.documentElement.scrollHeight - window.innerHeight - 2) {
         sectionId = visibleSections.at(-1).id;
       }
       setActiveSection((current) => current === sectionId ? current : sectionId);
 
       const subsectionIds = sectionId === '05'
         ? (data.technicalDetail ?? []).map((item) => item.id)
-        : sectionId === '06' ? (data.dataModel ?? []).map((item) => item.id) : [];
+        : sectionId === '06' ? (data.dataModel ?? []).map((item) => item.id)
+          : (data.customSections?.[sectionId]?.subsections ?? []).map((item) => item.id);
       let subsectionId = null;
       for (const id of subsectionIds) {
         const subsection = document.getElementById(`${sectionId}-${id}`);
@@ -851,7 +892,7 @@ export default function App() {
       window.removeEventListener('keydown', markKeyboardScroll);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [expanded, data.technicalDetail, data.dataModel, data.sectionOrder]);
+  }, [expanded, data.technicalDetail, data.dataModel, data.customSections, data.sectionOrder, data.sectionMeta]);
 
   useLayoutEffect(() => {
     if (!navigationTarget || !expanded[navigationTarget.sectionId]) return undefined;
@@ -874,6 +915,76 @@ export default function App() {
       return next;
     });
     setDirty(true);
+  };
+
+  const addSection = () => {
+    const title = newSectionTitle.trim();
+    if (!title || !newSectionBlocks.length) {
+      setSectionFormError(!title ? 'Escribe un título para la sección.' : 'Selecciona al menos un bloque.');
+      return;
+    }
+    const section = createCustomSection(newSectionBlocks);
+    mutate((next) => {
+      next.sectionOrder.push(section.id);
+      next.sectionMeta[section.id] = { title, active: true, kind: 'custom' };
+      next.customSections[section.id] = section;
+    });
+    setExpanded((current) => ({ ...current, [section.id]: true }));
+    setAddSectionOpen(false);
+    setNewSectionTitle('');
+    setNewSectionBlocks(['description']);
+    setSectionFormError('');
+    goTo(section.id);
+  };
+
+  const renameSection = (id, title) => mutate((next) => { next.sectionMeta[id].title = title; });
+  const reorderSection = (id, targetId) => {
+    if (!targetId || id === targetId) return;
+    mutate((next) => moveSection(next, id, targetId));
+    setActiveSection(id);
+    setActiveSubsection(null);
+  };
+  const shiftSection = (id, direction) => {
+    const active = visibleSectionIds(data);
+    const target = active[active.indexOf(id) + direction];
+    reorderSection(id, target);
+  };
+  const deactivateSection = (id) => {
+    const active = visibleSectionIds(data);
+    const replacement = active[active.indexOf(id) + 1] ?? active[active.indexOf(id) - 1] ?? null;
+    mutate((next) => { next.sectionMeta[id].active = false; });
+    setNavigationTarget(null);
+    setActiveSubsection(null);
+    setActiveSection(replacement);
+  };
+  const reactivateSection = (id) => {
+    mutate((next) => { next.sectionMeta[id].active = true; });
+    setExpanded((current) => ({ ...current, [id]: true }));
+    goTo(id);
+  };
+  const deleteSection = (id) => {
+    if (!window.confirm(`¿Eliminar la sección «${data.sectionMeta[id].title}» y todo su contenido?`)) return;
+    const active = visibleSectionIds(data);
+    const replacement = active[active.indexOf(id) + 1] ?? active[active.indexOf(id) - 1] ?? null;
+    mutate((next) => {
+      removeSection(next, id);
+      delete next.moduleManifest?.[id];
+      const keys = { '02': 'history', '04': 'affectedComponents', '07': 'testCases', '08': 'references' };
+      if (keys[id]) { delete next[keys[id]]; delete next.tableColumns?.[keys[id]]; }
+      if (id === '03') delete next.summary;
+      if (id === '05') delete next.technicalDetail;
+      if (id === '06') delete next.dataModel;
+      if (id === '01') {
+        next.document.title = ''; next.document.ticketId = ''; next.document.application = '';
+        next.document.author = ''; next.document.date = ''; next.document.version = '';
+        next.document.technicalProfile = ''; next.document.technicalProfileTags = [];
+        next.document.technicalProfileCustomOptions = { technology: [], banking: [] };
+      }
+    });
+    setExpanded((current) => { const next = { ...current }; delete next[id]; return next; });
+    setNavigationTarget(null);
+    setActiveSubsection(null);
+    setActiveSection(replacement);
   };
 
   const setDocumentField = (field, value) => mutate((next) => { next.document[field] = value; });
@@ -1044,7 +1155,7 @@ export default function App() {
     if (!canEditDocumentRef.current) throw new Error('No tienes permiso de edición.');
     if (dirty && !window.confirm('Hay cambios no exportados. ¿Quieres continuar y perderlos?')) return;
     setData(next);
-    setActiveSection(next.sectionOrder[0]);
+    setActiveSection(visibleSectionIds(next)[0] ?? null);
     setActiveSubsection(null);
     setNavigationTarget(null);
     setExpanded(Object.fromEntries(next.sectionOrder.map((id) => [id, true])));
@@ -1059,7 +1170,7 @@ export default function App() {
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
-    const hasHeader = documentSectionOrder(data).includes('01');
+    const hasHeader = visibleSectionIds(data).includes('01');
     const safeId = hasHeader ? (data.document.ticketId.replace(/[^a-z0-9-_]/gi, '_') || 'EVOLUTIVO') : 'DOCUMENTO';
     anchor.href = url;
     anchor.download = `${safeId}${hasHeader ? `_v${data.document.version}` : ''}.${extension}`;
@@ -1100,11 +1211,11 @@ export default function App() {
       const fileContent = await file.text();
       if (!canEditDocumentRef.current) return;
       const parsed = JSON.parse(fileContent);
-      if (parsed.schemaVersion !== '1.0' || !parsed.document) throw new Error('Formato no reconocido');
+      if (!['1.0', '1.1'].includes(parsed.schemaVersion) || !parsed.document) throw new Error('Formato no reconocido');
       const importedDocument = normalizeDocument(parsed);
       pendingImportRef.current = importedDocument;
       setData((current) => canEditDocumentRef.current ? importedDocument : current);
-      setActiveSection(importedDocument.sectionOrder[0]);
+      setActiveSection(visibleSectionIds(importedDocument)[0] ?? null);
       setActiveSubsection(null);
       setNavigationTarget(null);
     } catch {
@@ -1137,6 +1248,33 @@ export default function App() {
   );
 
   const renderSection = (id) => {
+    if (data.sectionMeta[id]?.kind === 'custom') {
+      const block = data.customSections[id];
+      const ordinal = sectionOrdinal(data, id);
+      return <div className="custom-section-editor">
+        {block.blocks.includes('description') && <div className="custom-block"><h3>Descripción</h3><ResizableTextarea resizeId={`custom-description-${id}`} height={textareaHeights[`custom-description-${id}`]} onResize={rememberTextareaHeight} className="rich-text" value={block.description} aria-label={`Descripción de ${data.sectionMeta[id].title}`} onChange={(event) => mutate((next) => { next.customSections[id].description = event.target.value; })} /></div>}
+        {block.blocks.includes('subsections') && <div className="custom-block"><h3>Subapartados</h3>
+          {block.subsections.map((item, index) => <article id={`${id}-${item.id}`} className="detail-block" key={item.id}>
+            <div className="subsection-heading-row"><div className="detail-heading"><span>{Number(ordinal)}.{index + 1}</span><InlineInput value={item.title} ariaLabel={`Título del apartado ${Number(ordinal)}.${index + 1}`} onChange={(value) => mutate((next) => { next.customSections[id].subsections[index].title = value; })} /></div>
+              {canEditDocument && <div className="subsection-actions no-print"><button type="button" disabled={index === 0} aria-label={`Subir apartado ${index + 1}`} onClick={() => mutate((next) => moveArrayItem(next.customSections[id].subsections, index, -1))}><ArrowUp size={14} /></button><button type="button" disabled={index === block.subsections.length - 1} aria-label={`Bajar apartado ${index + 1}`} onClick={() => mutate((next) => moveArrayItem(next.customSections[id].subsections, index, 1))}><ArrowDown size={14} /></button><button className="delete-button" type="button" aria-label={`Eliminar apartado ${index + 1}`} onClick={() => mutate((next) => { next.customSections[id].subsections.splice(index, 1); })}><Trash2 size={14} /></button></div>}
+            </div><ResizableTextarea resizeId={`custom-subsection-${item.id}`} height={textareaHeights[`custom-subsection-${item.id}`]} onResize={rememberTextareaHeight} className="rich-text compact" value={item.content} aria-label={`Contenido del apartado ${Number(ordinal)}.${index + 1}`} onChange={(event) => mutate((next) => { next.customSections[id].subsections[index].content = event.target.value; })} />
+          </article>)}
+          {canEditDocument && <button className="text-action no-print" type="button" onClick={() => mutate((next) => { next.customSections[id].subsections.push({ id: newId('subsection'), title: 'Nuevo subapartado', content: '' }); })}><Plus size={15} />Añadir subapartado</button>}
+        </div>}
+        {block.blocks.includes('table') && <div className="custom-block"><h3>Tabla</h3><EditableTable
+          columns={block.table.columns.map(toEditableColumn)} rows={block.table.rows} addLabel="Añadir fila"
+          onCellChange={(rowIndex, field, value) => mutate((next) => { next.customSections[id].table.rows[rowIndex][field] = value; })}
+          onAdd={() => mutate((next) => { const table = next.customSections[id].table; table.rows.push({ id: newId('row'), ...Object.fromEntries(table.columns.map((column) => [column.id, ''])) }); })}
+          onRemove={(index) => mutate((next) => { next.customSections[id].table.rows.splice(index, 1); })}
+          onMove={(index, direction) => mutate((next) => moveArrayItem(next.customSections[id].table.rows, index, direction))}
+          onColumnLabelChange={(index, value) => mutate((next) => { next.customSections[id].table.columns[index].label = value; })}
+          onColumnAdd={() => mutate((next) => { const table = next.customSections[id].table; const columnId = newId('column'); table.columns.push({ id: columnId, label: 'Nueva columna', kind: 'text' }); table.rows.forEach((row) => { row[columnId] = ''; }); })}
+          onColumnRemove={(index) => mutate((next) => { const table = next.customSections[id].table; if (table.columns.length === 1) return; const [removed] = table.columns.splice(index, 1); table.rows.forEach((row) => { delete row[removed.id]; }); })}
+          onColumnMove={(index, direction) => mutate((next) => moveArrayItem(next.customSections[id].table.columns, index, direction))}
+        /></div>}
+        {block.blocks.includes('cobol') && <div className="custom-block"><h3>COBOL</h3><div className="code-wrap"><ResizableTextarea resizeId={`custom-cobol-${id}`} height={textareaHeights[`custom-cobol-${id}`]} onResize={rememberTextareaHeight} className="code-editor" spellCheck="false" value={block.cobol} aria-label={`Código COBOL de ${data.sectionMeta[id].title}`} onChange={(event) => mutate((next) => { next.customSections[id].cobol = event.target.value; })} /></div></div>}
+      </div>;
+    }
     if (id === '01') return (
       <>
         <div className="header-grid">
@@ -1159,7 +1297,7 @@ export default function App() {
         {data.technicalDetail.map((block, index) => (
           <article id={`05-${block.id}`} className="detail-block" key={block.id}>
             <div className="subsection-heading-row">
-              <div className="detail-heading"><span>5.{index + 1}</span><InlineInput value={block.title} ariaLabel={`Título del apartado 5.${index + 1}`} onChange={(value) => setArrayCell('technicalDetail', index, 'title', value)} /></div>
+              <div className="detail-heading"><span>{Number(sectionOrdinal(data, '05'))}.{index + 1}</span><InlineInput value={block.title} ariaLabel={`Título del apartado ${Number(sectionOrdinal(data, '05'))}.${index + 1}`} onChange={(value) => setArrayCell('technicalDetail', index, 'title', value)} /></div>
               <div className="subsection-actions no-print">
                 <button className={`code-toggle ${block.codeEnabled ? 'active' : ''}`} type="button" role="switch" aria-checked={block.codeEnabled} onClick={() => setArrayCell('technicalDetail', index, 'codeEnabled', !block.codeEnabled)} title={`${block.codeEnabled ? 'Desactivar' : 'Activar'} bloque COBOL`}><Code2 size={13} /><span>COBOL</span><i /></button>
                 <button type="button" onClick={() => moveSubsection('technicalDetail', index, -1)} disabled={index === 0} aria-label={`Subir subapartado 5.${index + 1}`} title="Subir subapartado"><ArrowUp size={14} /></button>
@@ -1180,7 +1318,7 @@ export default function App() {
         {data.dataModel.length ? data.dataModel.map((group, groupIndex) => (
           <article id={`06-${group.id}`} className="data-model-group" key={group.id}>
             <div className="subsection-heading-row">
-              <div className="detail-heading"><span>6.{groupIndex + 1}</span><InlineInput value={group.title} ariaLabel={`Título del apartado 6.${groupIndex + 1}`} onChange={(value) => setDataModelTitle(groupIndex, value)} /></div>
+              <div className="detail-heading"><span>{Number(sectionOrdinal(data, '06'))}.{groupIndex + 1}</span><InlineInput value={group.title} ariaLabel={`Título del apartado ${Number(sectionOrdinal(data, '06'))}.${groupIndex + 1}`} onChange={(value) => setDataModelTitle(groupIndex, value)} /></div>
               <div className="subsection-actions no-print">
                 <button type="button" onClick={() => moveSubsection('dataModel', groupIndex, -1)} disabled={groupIndex === 0} aria-label={`Subir apartado 6.${groupIndex + 1}`} title="Subir subapartado"><ArrowUp size={14} /></button>
                 <button type="button" onClick={() => moveSubsection('dataModel', groupIndex, 1)} disabled={groupIndex === data.dataModel.length - 1} aria-label={`Bajar apartado 6.${groupIndex + 1}`} title="Bajar subapartado"><ArrowDown size={14} /></button>
@@ -1265,14 +1403,17 @@ export default function App() {
       <aside className="sidebar no-print">
         <div className="sidebar-title">Índice</div>
         <nav>
-          {visibleSections.map(({ id, title, icon: Icon }) => (
-            <div key={id}>
-              <button className={`nav-item ${activeSection === id ? 'active' : ''}`} type="button" onClick={() => goTo(id)}><Icon size={17} /><span className="nav-number">{id}</span><span>{title}</span>{(id === '05' || id === '06') && <ChevronDown size={14} className="nav-chevron" />}</button>
-              {id === '05' && expanded['05'] && <div className="subnav">{(data.technicalDetail ?? []).map((item, index) => <button className={activeSection === '05' && activeSubsection === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => goToSubsection('05', item.id)}><span>5.{index + 1}</span>{item.title}</button>)}</div>}
-              {id === '06' && expanded['06'] && <div className="subnav">{(data.dataModel ?? []).map((group, index) => <button className={activeSection === '06' && activeSubsection === group.id ? 'active' : ''} type="button" key={group.id} onClick={() => goToSubsection('06', group.id)}><span>6.{index + 1}</span>{group.title}</button>)}</div>}
+          {visibleSections.map(({ id, title, icon: Icon, ordinal }) => (
+            <div key={id} className="nav-section" draggable={canEditDocument} onDragStart={(event) => { draggedSectionId.current = id; event.dataTransfer.effectAllowed = 'move'; }} onDragOver={(event) => { if (canEditDocument) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); if (canEditDocument) reorderSection(draggedSectionId.current, id); draggedSectionId.current = null; }} onDragEnd={() => { draggedSectionId.current = null; }}>
+              <div className="nav-section-row"><button className={`nav-item ${activeSection === id ? 'active' : ''}`} type="button" onClick={() => goTo(id)}><Icon size={17} /><span className="nav-number">{ordinal}</span><span>{title}</span>{(id === '05' || id === '06' || data.sectionMeta[id]?.kind === 'custom') && <ChevronDown size={14} className="nav-chevron" />}</button>{canEditDocument && activeSection === id && <button className="nav-delete delete-button" type="button" aria-label={`Eliminar sección ${title}`} title="Eliminar sección" onClick={() => deleteSection(id)}><X size={14} /></button>}</div>
+              {id === '05' && expanded['05'] && <div className="subnav">{(data.technicalDetail ?? []).map((item, index) => <button className={activeSection === '05' && activeSubsection === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => goToSubsection('05', item.id)}><span>{Number(ordinal)}.{index + 1}</span>{item.title}</button>)}</div>}
+              {id === '06' && expanded['06'] && <div className="subnav">{(data.dataModel ?? []).map((group, index) => <button className={activeSection === '06' && activeSubsection === group.id ? 'active' : ''} type="button" key={group.id} onClick={() => goToSubsection('06', group.id)}><span>{Number(ordinal)}.{index + 1}</span>{group.title}</button>)}</div>}
+              {data.sectionMeta[id]?.kind === 'custom' && expanded[id] && data.customSections[id].blocks.includes('subsections') && <div className="subnav">{data.customSections[id].subsections.map((item, index) => <button className={activeSection === id && activeSubsection === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => goToSubsection(id, item.id)}><span>{Number(ordinal)}.{index + 1}</span>{item.title}</button>)}</div>}
             </div>
           ))}
         </nav>
+        {canEditDocument && <button className="text-action sidebar-add-section" type="button" onClick={() => setAddSectionOpen(true)}><Plus size={15} />Añadir sección</button>}
+        {inactiveSections.length > 0 && <div className="inactive-sections"><h3>Secciones desactivadas</h3>{inactiveSections.map((id) => <div key={id}><span>{data.sectionMeta[id].title}</span>{canEditDocument && <button type="button" onClick={() => reactivateSection(id)} aria-label={`Reactivar sección ${data.sectionMeta[id].title}`}>Reactivar</button>}</div>)}</div>}
         {data.sectionOrder.includes('01') && <div className="document-info">
           <h3>Información del documento</h3>
           <dl>
@@ -1297,14 +1438,16 @@ export default function App() {
 
       <main className="document-area">
         <div className="mobile-title no-print"><span>Documento activo</span>{data.sectionOrder.includes('01') && <strong>{data.document.ticketId}</strong>}</div>
-        {visibleSections.map((definition) => (
-          <SectionCard key={definition.id} definition={definition} expanded={expanded[definition.id]} onToggle={() => setExpanded((current) => ({ ...current, [definition.id]: !current[definition.id] }))}>
+        {visibleSections.length === 0 && <div className="empty-sections" role="status">Este documento no tiene secciones activas.{canEditDocument && <button className="text-action" type="button" onClick={() => setAddSectionOpen(true)}><Plus size={15} />Añadir sección</button>}</div>}
+        {visibleSections.map((definition, index) => (
+          <SectionCard key={definition.id} definition={definition} ordinal={definition.ordinal} expanded={expanded[definition.id]} onToggle={() => setExpanded((current) => ({ ...current, [definition.id]: !current[definition.id] }))} onTitleChange={(title) => renameSection(definition.id, title)} onMove={(direction) => shiftSection(definition.id, direction)} first={index === 0} last={index === visibleSections.length - 1} onDeactivate={() => deactivateSection(definition.id)} onDelete={() => deleteSection(definition.id)}>
             {renderSection(definition.id)}
           </SectionCard>
         ))}
       </main>
 
       {newModal && canEditDocument && <Modal title="Crear nuevo evolutivo" className="new-document-modal" onClose={() => setNewModal(false)}><NewDocumentChoices configured={configured && profileStatus === 'ready' && profile?.is_active} onBlank={createNew} onTemplate={openCatalog} onManage={() => openCatalog()} onClose={() => setNewModal(false)} /></Modal>}
+      {addSectionOpen && canEditDocument && <Modal title="Añadir sección" className="add-section-modal" onClose={() => { setAddSectionOpen(false); setSectionFormError(''); }}><div className="add-section-form"><label>Nombre de la sección<input autoFocus value={newSectionTitle} maxLength={160} onChange={(event) => { setNewSectionTitle(event.target.value); setSectionFormError(''); }} /></label><fieldset><legend>Contenido inicial</legend>{[['description', 'Descripción'], ['subsections', 'Subapartados'], ['table', 'Tabla configurable'], ['cobol', 'Código COBOL']].map(([key, label]) => <label key={key}><input type="checkbox" checked={newSectionBlocks.includes(key)} onChange={(event) => setNewSectionBlocks((current) => event.target.checked ? [...current, key] : current.filter((item) => item !== key))} />{label}</label>)}</fieldset>{sectionFormError && <p role="alert" className="auth-error">{sectionFormError}</p>}<div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setAddSectionOpen(false)}>Cancelar</button><button className="primary-button" type="button" onClick={addSection}>Crear sección</button></div></div></Modal>}
       {catalogOpen && <Modal title="Biblioteca de plantillas" className="template-modal" onClose={() => setCatalogOpen(false)}><TemplateCatalog document={data} user={user} role={role} canEdit={canEditDocument} configured={configured && profileStatus === 'ready' && profile?.is_active} initialVersionId={catalogInitialVersionId} onCreate={createFromTemplate} /></Modal>}
       {accessRequestsOpen && canManageUsers && <AccessRequestsModal onClose={() => setAccessRequestsOpen(false)} returnFocusRef={userButtonRef} />}
       {usersRolesOpen && canManageUsers && <UsersAndRolesModal onClose={() => setUsersRolesOpen(false)} returnFocusRef={userButtonRef} />}

@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { allTemplateNodeIds, templateNodeState, toTemplateStructure, toggleTemplateNode } from './templateStructure';
+import { allTemplateNodeIds, hasEmptyCustomSelection, templateNodeState, toTemplateStructure, toggleTemplateNode } from './templateStructure';
 import { hideOwnVersion, listAvailableTemplates, listOwnTemplates, listPendingTemplates, proposeTemplate, reviewTemplate, retireTemplate } from './templateRepository';
 
-const labels = { section: 'Sección', technicalProfile: 'Perfil técnico', technicalSubsection: 'Subapartado técnico', dataSubsection: 'Subapartado de datos', dataSource: 'Tabla / fichero / datos', standardTable: 'Tabla' };
+const labels = { section: 'Sección', technicalProfile: 'Perfil técnico', technicalSubsection: 'Subapartado técnico', dataSubsection: 'Subapartado de datos', dataSource: 'Tabla / fichero / datos', standardTable: 'Tabla', customDescription: 'Descripción', customSubsections: 'Subapartados', customSubsection: 'Subapartado', customTable: 'Tabla', customCobol: 'COBOL' };
 
 function TreeNode({ item, selection, onToggle, fixedIds, depth = 0, parentChecked = true }) {
   const { checked, indeterminate } = templateNodeState(item, selection);
   return <div className="template-tree-node" style={{ '--indent': `${4 + depth * 18}px` }}>
     <label><input type="checkbox" checked={checked} ref={(input) => { if (input) input.indeterminate = indeterminate; }}
-      aria-label={`${labels[item.kind]} ${item.label}`} aria-checked={indeterminate ? 'mixed' : checked}
+      aria-label={`${labels[item.kind]} ${item.kind === 'section' && /^0[1-8]$/.test(item.sectionId) ? `${item.sectionId} ` : ''}${item.label}`} aria-checked={indeterminate ? 'mixed' : checked}
       disabled={!parentChecked || fixedIds.has(item.templateNodeId)} onChange={(event) => onToggle(item.templateNodeId, event.target.checked)} />
       <span><strong>{item.label || labels[item.kind]}</strong><small>{labels[item.kind]}</small></span></label>
     {item.children.map((child) => <TreeNode key={child.templateNodeId} item={child} selection={selection} onToggle={onToggle} fixedIds={fixedIds} depth={depth + 1} parentChecked={parentChecked && checked} />)}
@@ -18,7 +18,7 @@ function TreeNode({ item, selection, onToggle, fixedIds, depth = 0, parentChecke
 const collectRoots = (structure) => {
   const roots = [];
   const visit = (item) => {
-    if (['section', 'technicalSubsection', 'dataSubsection', 'dataSource', 'standardTable'].includes(item.kind)) roots.push(item);
+    if (['section', 'technicalSubsection', 'dataSubsection', 'dataSource', 'standardTable', 'customDescription', 'customSubsections', 'customSubsection', 'customTable', 'customCobol'].includes(item.kind)) roots.push(item);
     item.children.forEach(visit);
   };
   structure.sections.forEach(visit);
@@ -31,6 +31,7 @@ const fixedTemplateIds = (structure) => {
   structure.sections.forEach((section) => fixed.add(section.templateNodeId));
   fixed.add(structure.root.rootNodeId);
   if (structure.root.rootKind === 'dataSource') fixed.add(structure.sections[0].children[0].templateNodeId);
+  if (structure.root.rootKind === 'customSubsection') fixed.add(structure.sections[0].children[0].templateNodeId);
   return fixed;
 };
 
@@ -44,6 +45,7 @@ const selectedStructure = (structure, selection) => {
   };
   const sections = structure.sections.map((section) => prune(section)).filter(Boolean);
   if (!sections.length) throw new Error('Selecciona al menos una sección.');
+  if (hasEmptyCustomSelection(structure, selection)) throw new Error('Selecciona al menos un bloque para cada sección personalizada.');
   const root = structure.root;
   if (root && [...fixedTemplateIds(structure)].some((id) => !selection.has(id))) throw new Error('La raíz y los contenedores del módulo son obligatorios.');
   return { ...structure, sections };
@@ -131,6 +133,7 @@ export default function TemplateCatalog({ document, user, role, canEdit, configu
   }, [document, fullStructure, type, rootNodeId]);
   useEffect(() => { setProposalSelection(new Set(proposedStructure ? allTemplateNodeIds(proposedStructure) : [])); }, [proposedStructure]);
   const proposalSectionCount = proposedStructure?.sections.filter((item) => proposalSelection.has(item.templateNodeId)).length ?? 0;
+  const proposalHasEmptyCustom = proposedStructure ? hasEmptyCustomSelection(proposedStructure, proposalSelection) : false;
   const submitProposal = async () => {
     if (!proposedStructure || !name.trim() || proposalSectionCount === 0) return;
     setBusy(true); setError('');
@@ -177,6 +180,7 @@ export default function TemplateCatalog({ document, user, role, canEdit, configu
     finally { setBusy(false); }
   };
   const sectionCount = selected?.version?.structure?.sections.filter((item) => selection.has(item.templateNodeId)).length ?? 0;
+  const selectedHasEmptyCustom = selected ? hasEmptyCustomSelection(selected.version.structure, selection) : false;
 
   if (!configured) return <div className="template-empty" role="status">El catálogo requiere una conexión a Supabase y un perfil activo.</div>;
   return <div className="template-catalog">
@@ -198,7 +202,8 @@ export default function TemplateCatalog({ document, user, role, canEdit, configu
       <p className="template-warning">Revisa títulos de subapartados, cabeceras de columnas y opciones del perfil técnico: podrían contener términos internos. La propuesta excluye texto del documento, código y valores.</p>
       {proposedStructure && <><div className="template-tree-preview">{proposedStructure.sections.map((item) => <TreeNode key={item.templateNodeId} item={item} selection={proposalSelection} onToggle={(id, checked) => setProposalSelection((current) => toggleTemplateNode(proposedStructure, current, id, checked))} fixedIds={fixedTemplateIds(proposedStructure)} />)}</div>
         <p className="template-selection-summary" role="status">{proposalSectionCount} {proposalSectionCount === 1 ? 'sección' : 'secciones'} seleccionadas · {proposalSelection.size} bloques estructurales.</p></>}
-      <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setProposing(false)}>Cancelar</button><button className="primary-button" type="button" disabled={busy || !name.trim() || !proposedStructure || proposalSectionCount === 0} onClick={submitProposal}>Enviar propuesta</button></div>
+      {proposalHasEmptyCustom && <p className="template-warning" role="alert">Selecciona al menos un bloque para cada sección personalizada.</p>}
+      <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setProposing(false)}>Cancelar</button><button className="primary-button" type="button" disabled={busy || !name.trim() || !proposedStructure || proposalSectionCount === 0 || proposalHasEmptyCustom} onClick={submitProposal}>Enviar propuesta</button></div>
     </div> : <div className="template-layout">
       <div className="template-list" aria-label="Plantillas">
         {loading ? <p role="status">Cargando plantillas…</p> : rows.length === 0 ? <p>No hay plantillas en esta pestaña.</p> : rows.map((item) => <button type="button" key={item.version.id} className={selected?.version?.id === item.version.id ? 'selected' : ''} onClick={() => choose(item)}><strong>{item.version.name}</strong><span>{item.template_type === 'full' ? 'Completa' : `Módulo · ${item.section_id} · ${labels[item.root_kind]}`} · v{item.version.revision}</span><small>{item.version.category || 'Sin categoría'}{item.version.state !== 'approved' ? ` · ${item.version.state}` : ''}</small></button>)}
@@ -209,8 +214,9 @@ export default function TemplateCatalog({ document, user, role, canEdit, configu
           {selected.version.review_reason && <p className="template-warning">Motivo del rechazo: {selected.version.review_reason}</p>}
           <div className="template-tree-preview">{selected.version.structure.sections.map((item) => <TreeNode key={item.templateNodeId} item={item} selection={selection} fixedIds={fixedIds} onToggle={(id, checked) => setSelection((current) => toggleTemplateNode(selected.version.structure, current, id, checked))} />)}</div>
           <p className="template-selection-summary" role="status">{sectionCount} {sectionCount === 1 ? 'sección' : 'secciones'} seleccionadas · {[...selection].length} bloques estructurales.</p>
-          {tab === 'available' && canEdit && <button className="primary-button" type="button" disabled={busy || sectionCount === 0} onClick={create}>Crear documento</button>}
-          {tab === 'mine' && canEdit && selected.version.author_id === user?.id && <button className="primary-button" type="button" disabled={busy || sectionCount === 0} onClick={create}>Crear documento desde mi propuesta</button>}
+          {selectedHasEmptyCustom && <p className="template-warning" role="alert">Selecciona al menos un bloque para cada sección personalizada.</p>}
+          {tab === 'available' && canEdit && <button className="primary-button" type="button" disabled={busy || sectionCount === 0 || selectedHasEmptyCustom} onClick={create}>Crear documento</button>}
+          {tab === 'mine' && canEdit && selected.version.author_id === user?.id && <button className="primary-button" type="button" disabled={busy || sectionCount === 0 || selectedHasEmptyCustom} onClick={create}>Crear documento desde mi propuesta</button>}
           {canEdit && selected.version.state !== 'pending' && !selected.retired_at && (selected.owner_id === user?.id || role === 'admin') && <button className="text-action" type="button" onClick={() => beginProposal(selected)}>Proponer nueva versión</button>}
           {tab === 'mine' && canEdit && selected.version.author_id === user?.id && <button className="text-action delete-button" type="button" disabled={busy} onClick={hideProposal}>Ocultar de Mis propuestas</button>}
           {tab === 'pending' && role === 'admin' && <div className="template-review-actions"><label>Motivo del rechazo (opcional)<textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label><button type="button" disabled={busy} onClick={() => review('approved')}>Aprobar</button><button type="button" disabled={busy} onClick={() => review('rejected')}>Rechazar</button></div>}

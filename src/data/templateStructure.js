@@ -1,17 +1,19 @@
+import { BUILT_IN_SECTION_TITLES, createCustomSection, newId, pruneCustomBlocks } from './documentSections.js';
+
 export const SECTION_IDS = ['01', '02', '03', '04', '05', '06', '07', '08'];
 export const STANDARD_TABLES = { '02': 'history', '04': 'affectedComponents', '07': 'testCases', '08': 'references' };
 export const TEMPLATE_SCHEMA_VERSION = 1;
 export const EMPTY_PROFILE_OPTIONS = { technology: [], banking: [] };
 
-export function validateSectionOrder(order) {
-  if (!Array.isArray(order) || !order.length || new Set(order).size !== order.length || order.some((id) => !SECTION_IDS.includes(id))) {
+export function validateSectionOrder(order, allowCustom = false) {
+  if (!Array.isArray(order) || (!allowCustom && !order.length) || new Set(order).size !== order.length || order.some((id) => !SECTION_IDS.includes(id) && (!allowCustom || !/^section-[A-Za-z0-9-]{8,}$/.test(id)))) {
     throw new Error('El documento debe contener secciones conocidas, únicas y ordenadas.');
   }
   return [...order];
 }
 
 export function documentSectionOrder(document) {
-  return validateSectionOrder(document.sectionOrder === undefined ? SECTION_IDS : document.sectionOrder);
+  return validateSectionOrder(document.sectionOrder === undefined ? SECTION_IDS : document.sectionOrder, document.schemaVersion === '1.1');
 }
 
 export function pruneDocumentSections(document) {
@@ -19,6 +21,10 @@ export function pruneDocumentSections(document) {
   const order = documentSectionOrder(result);
   result.sectionOrder = order;
   result.moduleManifest ??= {};
+  if (result.schemaVersion === '1.1') {
+    result.sectionMeta = Object.fromEntries(order.map((id) => [id, result.sectionMeta[id]]));
+    result.customSections = Object.fromEntries(order.filter((id) => !SECTION_IDS.includes(id)).map((id) => [id, pruneCustomBlocks(result.customSections[id])]));
+  }
   const present = new Set(order);
   for (const sectionId of SECTION_IDS) if (!present.has(sectionId)) delete result.moduleManifest[sectionId];
   for (const [sectionId, key] of Object.entries(STANDARD_TABLES)) {
@@ -35,6 +41,9 @@ export function pruneDocumentSections(document) {
     result.document.title = '';
     result.document.ticketId = '';
     result.document.application = '';
+    result.document.author = '';
+    result.document.date = '';
+    result.document.version = '';
   }
   if (!present.has('01') || result.moduleManifest['01']?.technicalProfile === false) {
     result.document.technicalProfile = '';
@@ -50,8 +59,17 @@ const node = (id, kind, sectionId, label, config = {}, children = []) => ({ temp
 
 export function toTemplateStructure(document, scope = { type: 'full' }) {
   const order = documentSectionOrder(document);
+  const modern = document.schemaVersion === '1.1';
   const roots = order.map((sectionId) => {
     const children = [];
+    if (modern && document.sectionMeta[sectionId]?.kind === 'custom') {
+      const block = document.customSections[sectionId];
+      if (block.blocks.includes('description')) children.push(node(`${sectionId}:description`, 'customDescription', sectionId, 'Descripción'));
+      if (block.blocks.includes('subsections')) children.push(node(`${sectionId}:subsections`, 'customSubsections', sectionId, 'Subapartados', {}, block.subsections.map((item, index) => node(`${sectionId}:subsection:${index}`, 'customSubsection', sectionId, String(item.title ?? '')))));
+      if (block.blocks.includes('table')) children.push(node(`${sectionId}:table`, 'customTable', sectionId, 'Tabla', { columns: block.table.columns.map(column), rowCount: block.table.rows.length }));
+      if (block.blocks.includes('cobol')) children.push(node(`${sectionId}:cobol`, 'customCobol', sectionId, 'COBOL'));
+      return node(`section:${sectionId}`, 'section', sectionId, document.sectionMeta[sectionId].title, { title: document.sectionMeta[sectionId].title, active: document.sectionMeta[sectionId].active, sectionType: 'custom' }, children);
+    }
     if (sectionId === '01' && document.moduleManifest?.['01']?.technicalProfile !== false) {
       children.push(node('01:profile', 'technicalProfile', '01', 'Perfil técnico', {
         tags: [...(document.document?.technicalProfileTags ?? [])],
@@ -81,7 +99,7 @@ export function toTemplateStructure(document, scope = { type: 'full' }) {
           });
         }))));
     }
-    return node(`section:${sectionId}`, 'section', sectionId, sectionId, {}, children);
+    return node(`section:${sectionId}`, 'section', sectionId, modern ? document.sectionMeta[sectionId].title : sectionId, modern ? { title: document.sectionMeta[sectionId].title, active: document.sectionMeta[sectionId].active, sectionType: 'builtIn' } : {}, children);
   });
   let selectedRoots = roots;
   let root = null;
@@ -96,15 +114,15 @@ export function toTemplateStructure(document, scope = { type: 'full' }) {
       return null;
     };
     const found = find(roots);
-    if (!found || !['section', 'technicalSubsection', 'dataSubsection', 'dataSource', 'standardTable'].includes(found.current.kind)) throw new Error('Raíz de módulo no válida.');
+    if (!found || !['section', 'technicalSubsection', 'dataSubsection', 'dataSource', 'standardTable', 'customDescription', 'customSubsections', 'customSubsection', 'customTable', 'customCobol'].includes(found.current.kind)) throw new Error('Raíz de módulo no válida.');
     root = { rootKind: found.current.kind, sectionId: found.current.sectionId,
-      rootSlot: found.current.kind === 'standardTable' ? found.current.config.slot : ({ section: 'section', technicalSubsection: 'technicalDetail.items', dataSubsection: 'dataModel.groups', dataSource: 'dataModel.groups.sources' })[found.current.kind],
+      rootSlot: found.current.kind === 'standardTable' ? found.current.config.slot : ({ section: 'section', technicalSubsection: 'technicalDetail.items', dataSubsection: 'dataModel.groups', dataSource: 'dataModel.groups.sources', customDescription: 'custom.description', customSubsections: 'custom.subsections', customSubsection: 'custom.subsections.items', customTable: 'custom.table', customCobol: 'custom.cobol' })[found.current.kind],
       rootNodeId: wanted };
     let branch = found.current;
     for (const ancestor of [...found.ancestors].reverse()) branch = { ...ancestor, children: [branch] };
     selectedRoots = [branch];
   } else if (scope.type !== 'full') throw new Error('Tipo de plantilla no válido.');
-  return { schemaVersion: TEMPLATE_SCHEMA_VERSION, type: scope.type, root, sections: selectedRoots };
+  return { schemaVersion: modern ? 2 : TEMPLATE_SCHEMA_VERSION, type: scope.type, root, sections: selectedRoots };
 }
 
 export function allTemplateNodeIds(structure) {
@@ -112,6 +130,12 @@ export function allTemplateNodeIds(structure) {
   const visit = (item) => { ids.push(item.templateNodeId); item.children.forEach(visit); };
   structure.sections.forEach(visit);
   return ids;
+}
+
+export function hasEmptyCustomSelection(structure, selection) {
+  return structure.sections.some((section) => section.config?.sectionType === 'custom'
+    && selection.has(section.templateNodeId)
+    && !section.children.some((child) => selection.has(child.templateNodeId)));
 }
 
 export function toggleTemplateNode(structure, selection, nodeId, selected) {
@@ -137,10 +161,11 @@ export function templateNodeState(node, selection) {
 }
 
 export function instantiateTemplate(structure, selection, user, baseDocument, now = new Date()) {
-  if (structure.schemaVersion !== TEMPLATE_SCHEMA_VERSION || !['full', 'module'].includes(structure.type)) throw new Error('Versión de plantilla no compatible.');
+  if (![1, 2].includes(structure.schemaVersion) || !['full', 'module'].includes(structure.type)) throw new Error('Versión de plantilla no compatible.');
   const valid = new Set(allTemplateNodeIds(structure));
   const chosen = new Set(selection);
   if ([...chosen].some((id) => !valid.has(id))) throw new Error('Selección de plantilla no válida.');
+  if (hasEmptyCustomSelection(structure, chosen)) throw new Error('Selecciona al menos un bloque para cada sección personalizada.');
   const checkHierarchy = (item, parentSelected = true) => {
     if (chosen.has(item.templateNodeId) && !parentSelected) throw new Error('Selección sin sección o subapartado contenedor.');
     item.children.forEach((child) => checkHierarchy(child, chosen.has(item.templateNodeId)));
@@ -150,12 +175,36 @@ export function instantiateTemplate(structure, selection, user, baseDocument, no
   const selectedRoots = structure.sections.filter((section) => chosen.has(section.templateNodeId));
   if (!selectedRoots.length) throw new Error('Selecciona al menos una sección.');
   const result = structuredClone(baseDocument);
-  result.sectionOrder = selectedRoots.map((section) => section.sectionId);
+  result.schemaVersion = '1.1';
+  result.sectionOrder = [];
+  result.sectionMeta = {};
+  result.customSections = {};
   result.moduleManifest = {};
   result.document = { title: '', ticketId: '', application: '', author: user?.display_name ?? user?.name ?? 'Usuario', date: now.toISOString().slice(0, 10), version: '1.0', technicalProfile: '', technicalProfileTags: [], technicalProfileCustomOptions: structuredClone(EMPTY_PROFILE_OPTIONS) };
   const localId = (prefix) => `${prefix}-${crypto.randomUUID()}`;
   for (const section of selectedRoots) {
     const children = section.children.filter((item) => chosen.has(item.templateNodeId));
+    const isCustom = structure.schemaVersion === 2 && section.config?.sectionType === 'custom';
+    const localSectionId = isCustom ? newId('section') : section.sectionId;
+    result.sectionOrder.push(localSectionId);
+    result.sectionMeta[localSectionId] = {
+      title: structure.schemaVersion === 2 ? section.config.title : BUILT_IN_SECTION_TITLES[section.sectionId],
+      active: structure.schemaVersion === 2 ? section.config.active : true,
+      kind: isCustom ? 'custom' : 'builtIn',
+    };
+    if (isCustom) {
+      const blocks = children.map((item) => ({ customDescription: 'description', customSubsections: 'subsections', customTable: 'table', customCobol: 'cobol' })[item.kind]).filter(Boolean);
+      const block = createCustomSection(blocks, localSectionId);
+      const subsections = children.find((item) => item.kind === 'customSubsections');
+      if (subsections) block.subsections = subsections.children.filter((item) => chosen.has(item.templateNodeId)).map((item) => ({ id: newId('subsection'), title: item.label, content: '' }));
+      const table = children.find((item) => item.kind === 'customTable');
+      if (table) {
+        block.table.columns = table.config.columns.map((item) => ({ ...column(item), id: newId('column') }));
+        block.table.rows = Array.from({ length: table.config.rowCount }, () => ({ id: newId('row'), ...Object.fromEntries(block.table.columns.map((item) => [item.id, ''])) }));
+      }
+      result.customSections[localSectionId] = block;
+      continue;
+    }
     if (section.sectionId === '01') {
       const profile = children.find((item) => item.kind === 'technicalProfile');
       result.moduleManifest['01'] = { technicalProfile: Boolean(profile) };

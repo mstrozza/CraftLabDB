@@ -147,8 +147,9 @@ test('Plantillas se sitúa entre Información del documento y Apariencia, inclus
   await page.getByRole('button', { name: /Copia editable/ }).click();
   const documentCopy = JSON.parse(await readFile(await (await jsonDownload).path(), 'utf8'));
   documentCopy.sectionOrder = ['03'];
+  documentCopy.sectionMeta = { '03': documentCopy.sectionMeta['03'] };
   await page.locator('input[type=file]').setInputFiles({ name: 'sin-cabecera.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(documentCopy)) });
-  await expect(page.locator('.sidebar > nav + .template-sidebar-control + .appearance-control')).toHaveCount(1);
+  await expect(page.locator('.sidebar > .template-sidebar-control + .appearance-control')).toHaveCount(1);
   await page.getByRole('button', { name: 'Plantillas' }).click();
   await expect(page.getByRole('dialog', { name: 'Biblioteca de plantillas' })).toBeVisible();
   await context.close();
@@ -195,11 +196,14 @@ test('copia modular antigua y salidas conservan solo las secciones presentes', a
   await page.getByRole('button', { name: /Copia editable/ }).click();
   const original = JSON.parse(await readFile(await (await initialDownload).path(), 'utf8'));
   const legacy = { ...original };
+  legacy.schemaVersion = '1.0';
   delete legacy.sectionOrder;
   delete legacy.moduleManifest;
+  delete legacy.sectionMeta;
+  delete legacy.customSections;
   await page.locator('input[type=file]').setInputFiles({ name: 'antigua.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(legacy)) });
   await expect(page.locator('.document-area > section')).toHaveCount(8);
-  const modular = { ...original, sectionOrder: ['03', '04', '07'], moduleManifest: { '04': { table: false } } };
+  const modular = { ...original, sectionOrder: ['03', '04', '07'], sectionMeta: Object.fromEntries(['03', '04', '07'].map((id) => [id, original.sectionMeta[id]])), moduleManifest: { '04': { table: false } } };
   await page.locator('input[type=file]').setInputFiles({ name: 'modular.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(modular)) });
   await expect(page.locator('#section-01')).toHaveCount(0);
   await expect(page.locator('#section-02')).toHaveCount(0);
@@ -214,7 +218,9 @@ test('copia modular antigua y salidas conservan solo las secciones presentes', a
   const wordFile = await wordDownload;
   expect(wordFile.suggestedFilename()).toBe('DOCUMENTO.doc');
   const word = await readFile(await wordFile.path(), 'utf8');
-  expect(word).not.toContain('<span>01</span>');
+  expect(word).toContain('<span>01</span> Resumen del cambio');
+  expect(word).toContain('<span>02</span> Componentes afectados');
+  expect(word).toContain('<span>03</span> Casos de prueba');
   expect(word).not.toContain('<span>05</span>');
   expect(word).not.toContain('Información del documento');
   expect(word).not.toContain('evolutivo-payload');
@@ -230,7 +236,7 @@ test('copia modular antigua y salidas conservan solo las secciones presentes', a
   expect(printContent).not.toContain('Detalle técnico');
   expect(printContent).not.toContain(original.document.ticketId);
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  await expect(page.locator('.sidebar .nav-item.active')).toContainText('07');
+  await expect(page.locator('.sidebar .nav-item.active')).toContainText('03');
   await context.close();
 });
 
@@ -370,7 +376,7 @@ test('omitir 01, 05, 06 y 08 o solo una fuente mantiene salidas y copia modular 
   const initialDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: /Copia editable/ }).click();
   const original = JSON.parse(await readFile(await (await initialDownload).path(), 'utf8'));
-  const omitted = { ...original, sectionOrder: ['02', '03', '04', '07'], moduleManifest: { '04': { table: false } } };
+  const omitted = { ...original, sectionOrder: ['02', '03', '04', '07'], sectionMeta: Object.fromEntries(['02', '03', '04', '07'].map((id) => [id, original.sectionMeta[id]])), moduleManifest: { '04': { table: false } } };
   await page.locator('input[type=file]').setInputFiles({ name: 'omitidas.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(omitted)) });
   for (const id of ['01', '05', '06', '08']) {
     await expect(page.locator(`#section-${id}`)).toHaveCount(0);

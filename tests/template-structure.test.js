@@ -58,7 +58,7 @@ test('selección parcial y módulo aislado crean copias limpias', () => {
   assert.equal(templateNodeState(structure.sections[2], chosen).indeterminate, true);
   const document = instantiateTemplate(structure, chosen, { display_name: 'Nuevo autor' }, source(), new Date('2026-10-06'));
   assert.deepEqual(document.sectionOrder, ['05', '06', '08']);
-  assert.equal(document.document.author, 'Nuevo autor');
+  assert.equal(document.document.author, '');
   assert.equal(document.document.ticketId, '');
   assert.equal(document.document.technicalProfile, '');
   assert.deepEqual(document.document.technicalProfileTags, []);
