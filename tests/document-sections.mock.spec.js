@@ -85,10 +85,11 @@ test('impresión muestra título largo en texto que puede ocupar varias líneas'
   const context = await mock.context(browser, mock.admin);
   const page = await context.newPage();
   await page.goto('/');
-  const title = 'Sección de validación técnica extensa '.repeat(9);
+  const title = `${'Sección de validación técnica extensa '.repeat(5).slice(0, 159)}.`;
   const card = page.locator('#section-01');
   await card.getByRole('textbox', { name: 'Título de sección 01' }).fill(title);
   await card.getByRole('textbox', { name: 'Título de sección 01' }).press('Tab');
+  await page.setViewportSize({ width: 760, height: 900 });
   await page.emulateMedia({ media: 'print' });
   await expect(card.locator('.section-title-input')).toBeHidden();
   await expect(card.locator('.print-section-title')).toBeVisible();
