@@ -1,0 +1,35 @@
+# Dependencias y almacenes locales
+node_modules/
+.node_modules-broken/
+.pnpm-store/
+.pnpm-store-broken/
+.dependency-repair/
+.agents/
+
+# Compilados, cobertura y cachés
+dist/
+coverage/
+.vite/
+playwright-report/
+test-results/
+supabase/.temp/
+
+# Registros
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Configuración local y secretos
+.env
+.env.*
+!.env.example
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

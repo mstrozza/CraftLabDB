@@ -1,12 +1,17 @@
 # Biblioteca de plantillas
 
-La biblioteca guarda únicamente estructuras de documentos. Los documentos creados siguen en el navegador hasta que se exportan. Una sección desmarcada desaparece del documento, del índice y de sus salidas. Las copias JSON anteriores que no contienen `sectionOrder` conservan las ocho secciones.
+La biblioteca guarda únicamente estructuras de documentos. Los documentos creados permanecen en memoria mientras la página está abierta y desaparecen al recargar o cerrar, salvo que el usuario descargue una copia. Una sección desmarcada desaparece del documento, del índice y de sus salidas. Las copias JSON `1.0` anteriores se importan; las nuevas se exportan como `1.1` con orden, títulos, activación y contenido local de cada sección. El texto del documento, el código COBOL y los valores de las tablas no se incluyen en propuestas de plantilla v2.
 
 ## Despliegue
 
 1. Aplicar, en orden, `supabase/migrations/202610060001_template_library.sql`, `supabase/migrations/202610070001_private_template_proposals.sql` y `supabase/migrations/202610070002_author_hidden_templates.sql`. La última añade `author_hidden_at`, evento `hidden`, lectura privada ampliada y rechazo sin motivo. No reaplicar las migraciones ya ejecutadas ni limpiar `deleted_at`.
 2. Verificar `template_propose`, `template_review`, `template_retire`, `template_current`, `template_own_current` y `template_hide_own_version`. La RPC legado `template_delete_proposal` permanece por compatibilidad, pero la interfaz no la llama. No se usan nuevas Edge Functions ni nuevas claves. Las RPC autenticadas vuelven a comprobar rol, estado activo y autoría.
-3. Publicar el frontend después de las tres migraciones. `admin` y `editor` pueden proponer, usar sus versiones propias visibles de cualquier estado y ocultarlas de **Mis propuestas**; solo `admin` puede aprobar, rechazar o retirar. Ocultar una versión pendiente no la retira de **Pendientes**; ocultar una aprobada no la retira de **Disponibles**. Una nueva versión pendiente no reemplaza a la vigente hasta aprobarla.
+3. Para secciones personalizadas, aplicar después `supabase/migrations/202610260001_custom_document_sections.sql`. Esta migración conserva el validador de plantillas v1 y añade validación estricta v2. Verificarla en un proyecto de prueba antes de publicar un frontend que proponga v2.
+4. Publicar el frontend después de las migraciones. `admin` y `editor` pueden proponer, usar sus versiones propias visibles de cualquier estado y ocultarlas de **Mis propuestas**; solo `admin` puede aprobar, rechazar o retirar. Ocultar una versión pendiente no la retira de **Pendientes**; ocultar una aprobada no la retira de **Disponibles**. Una nueva versión pendiente no reemplaza a la vigente hasta aprobarla.
+
+## Secciones personalizadas y contenido local
+
+En el índice, **Añadir sección** pide título y al menos uno de cuatro bloques: descripción, subapartados, tabla o COBOL. Los títulos se editan en la tarjeta. Las flechas o el arrastre cambian el orden; los números visibles se recalculan. **Desactivar** conserva la sección en la copia JSON y permite reactivarla; **Eliminar** borra su contenido del documento actual. Word y PDF muestran solo las activas. La plantilla v2 guarda nombres estructurales y cabeceras, pero crea un documento nuevo con texto, código y celdas vacías. La app no guarda contenido documental en Supabase ni en almacenamiento local; solo exporta a petición del usuario. Los archivos descargados permanecen donde el usuario los guarde.
 
 ## Comprobaciones de permisos
 
